@@ -8,7 +8,10 @@ from passlib.context import CryptContext
 
 from backend.app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# NOTE: passlib's bcrypt handler is incompatible with some newer `bcrypt` releases on Windows
+# (it fails backend self-check during initialization). For a demo-friendly default, use
+# PBKDF2-SHA256 which is pure-Python and widely supported.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)

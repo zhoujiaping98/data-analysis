@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import math
+import hashlib
 from typing import List, Dict, Any
 
 import chromadb
@@ -32,23 +35,60 @@ class RemoteEmbeddingFunction(EmbeddingFunction):
             return asyncio.run(self._client.embed(list(input)))
 
 
+class LocalHashEmbeddingFunction(EmbeddingFunction):
+    """Lightweight, offline embedding fallback.
+
+    This avoids Chroma's default embedding, which may download large ONNX models at runtime.
+    It is not semantically strong, but is good enough for keyword-ish schema retrieval.
+    """
+
+    def __init__(self, dim: int = 384):
+        self._dim = dim
+        self._token_re = re.compile(r"[A-Za-z0-9_]+")
+
+    def _embed_one(self, text: str) -> List[float]:
+        vec = [0.0] * self._dim
+        tokens = self._token_re.findall((text or "").lower())
+        if not tokens:
+            return vec
+
+        for tok in tokens:
+            h = hashlib.blake2b(tok.encode("utf-8"), digest_size=8).digest()
+            idx = int.from_bytes(h, "little") % self._dim
+            vec[idx] += 1.0
+
+        norm = math.sqrt(sum(v * v for v in vec))
+        if norm > 0:
+            inv = 1.0 / norm
+            vec = [v * inv for v in vec]
+        return vec
+
+    def __call__(self, input: Documents) -> Embeddings:
+        return [self._embed_one(t) for t in list(input)]
+
+
 class SchemaVectorStore:
     def __init__(self):
         os.makedirs(settings.CHROMA_PERSIST_DIR, exist_ok=True)
 
-        # If embed config is missing, fall back to Chroma default embedding.
-        embed_fn = None
+        # Prefer remote embeddings when configured; otherwise use a lightweight offline fallback.
+        embed_fn: EmbeddingFunction = LocalHashEmbeddingFunction()
         if settings.has_embed_config:
             try:
                 embed_fn = RemoteEmbeddingFunction(get_embed_client())
             except Exception as e:
-                log.warning("Embedding not ready, fallback to default. err=%s", e)
+                log.warning("Embedding not ready, fallback to local hashing. err=%s", e)
 
         self._client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
-        self._collection = self._client.get_or_create_collection(
+        self._embed_fn = embed_fn
+        self._collection_metadata = {"hnsw:space": "cosine"}
+        self._collection = self._get_or_create_collection()
+
+    def _get_or_create_collection(self):
+        return self._client.get_or_create_collection(
             name=settings.CHROMA_COLLECTION,
-            embedding_function=embed_fn,
-            metadata={"hnsw:space": "cosine"},
+            embedding_function=self._embed_fn,
+            metadata=self._collection_metadata,
         )
 
     def reset(self) -> None:
@@ -56,19 +96,31 @@ class SchemaVectorStore:
             self._client.delete_collection(settings.CHROMA_COLLECTION)
         except Exception:
             pass
-        self._collection = self._client.get_or_create_collection(
-            name=settings.CHROMA_COLLECTION
-        )
+        self._collection = self._get_or_create_collection()
 
     def upsert_schema_docs(self, docs: List[Dict[str, Any]]) -> None:
         # docs: [{id, text, metadata}]
         ids = [d["id"] for d in docs]
         texts = [d["text"] for d in docs]
         metas = [d.get("metadata", {}) for d in docs]
-        self._collection.upsert(ids=ids, documents=texts, metadatas=metas)
+        try:
+            self._collection.upsert(ids=ids, documents=texts, metadatas=metas)
+            return
+        except Exception as e:
+            msg = str(e)
+            if "expecting embedding with dimension" in msg.lower():
+                log.warning("Embedding dimension changed; resetting collection and retrying. err=%s", e)
+                self.reset()
+                self._collection.upsert(ids=ids, documents=texts, metadatas=metas)
+                return
+            raise
 
     def search(self, query: str, k: int = 8) -> List[Dict[str, Any]]:
-        res = self._collection.query(query_texts=[query], n_results=k)
+        try:
+            res = self._collection.query(query_texts=[query], n_results=k)
+        except Exception as e:
+            log.warning("Vector search failed; returning empty hits. err=%s", e)
+            return []
         out: List[Dict[str, Any]] = []
         for i in range(len(res["ids"][0])):
             out.append(

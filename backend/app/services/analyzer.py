@@ -6,15 +6,17 @@ from typing import Any, Dict, List
 from backend.app.core.config import settings
 from backend.app.core.llm import get_chat_client
 
-ANALYSIS_PROMPT = """    You are a data analyst. You will receive:
-- The user's question
-- The SQL used
-- A small sample of the query result rows (possibly truncated)
-Provide:
-1) Key findings (bullet points)
-2) Caveats / data quality notes
-3) Next queries to dig deeper (2-3 suggestions)
-Keep it concise and actionable.
+ANALYSIS_PROMPT = """你是一名数据分析师。你会收到：
+- 用户问题
+- 实际执行的 SQL
+- 查询结果的部分样本行（可能被截断）
+
+请用中文输出，并包含：
+1）关键结论（要点列表）
+2）口径说明 / 数据质量与局限（要点列表）
+3）下一步建议（2-3 条可执行的后续查询方向）
+
+要求：简洁、可落地，不要输出 Markdown 代码块。
 """
 
 async def analyze(question: str, sql: str, columns: List[str], rows: List[List[Any]]) -> str:

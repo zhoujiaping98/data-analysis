@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -41,6 +43,31 @@ class Settings(BaseSettings):
     # limits
     MAX_ROWS: int = 500
     MAX_SQL_RETRY: int = 2
+
+    @staticmethod
+    def _strip_inline_comment(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        # Be forgiving: accept "123 # comment" and "123#comment" in .env values.
+        return value.split("#", 1)[0].strip()
+
+    @field_validator(
+        "JWT_EXPIRE_MINUTES",
+        "MYSQL_PORT",
+        "LLM_TIMEOUT_SECONDS",
+        "EMBED_TIMEOUT_SECONDS",
+        "MAX_ROWS",
+        "MAX_SQL_RETRY",
+        mode="before",
+    )
+    @classmethod
+    def _strip_int_comments(cls, v: Any) -> Any:
+        return cls._strip_inline_comment(v)
+
+    @field_validator("LLM_TEMPERATURE", mode="before")
+    @classmethod
+    def _strip_float_comments(cls, v: Any) -> Any:
+        return cls._strip_inline_comment(v)
 
     @property
     def mysql_dsn(self) -> str:

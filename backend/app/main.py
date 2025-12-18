@@ -13,6 +13,7 @@ from backend.app.api.conversations import router as conv_router
 from backend.app.api.chat import router as chat_router
 from backend.app.core.training import train_schema_on_startup
 from backend.app.core.sqlite_store import init_sqlite
+from backend.app.core.mysql import close_engine
 
 setup_logging()
 
@@ -43,3 +44,8 @@ async def _startup() -> None:
     await init_sqlite()
     # train schema index (skip if mysql not configured)
     await train_schema_on_startup()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    await close_engine()

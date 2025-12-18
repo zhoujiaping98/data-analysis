@@ -22,6 +22,14 @@ def _get_engine() -> AsyncEngine:
     return _engine
 
 
+async def close_engine() -> None:
+    global _engine
+    if _engine is None:
+        return
+    await _engine.dispose()
+    _engine = None
+
+
 _BAD_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|GRANT|REVOKE)\b", re.I)
 _GOOD_PREFIX = re.compile(r"^\s*(SELECT|WITH)\b", re.I)
 
