@@ -52,8 +52,36 @@ async function refreshConversations() {
   list.forEach(c => {
     const chip = document.createElement("div");
     chip.className = "chip" + (c.id === activeConversationId ? " active": "");
-    chip.textContent = (c.title || "Conversation").slice(0, 28);
+    const title = document.createElement("span");
+    title.className = "chip-title";
+    title.textContent = (c.title || "Conversation").slice(0, 28);
+    const del = document.createElement("button");
+    del.className = "chip-del";
+    del.type = "button";
+    del.title = "删除会话";
+    del.textContent = "×";
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm("确定删除该会话吗？此操作不可恢复。")) return;
+      try {
+        await apiFetch(`/conversations/${c.id}`, { method: "DELETE" });
+        if (c.id === activeConversationId) {
+          activeConversationId = "";
+          localStorage.removeItem("convId");
+        }
+        await refreshConversations();
+        if (!activeConversationId) {
+          const next = list.filter(x => x.id !== c.id)[0];
+          if (next) await loadConversation(next.id);
+          else await newConversation();
+        }
+      } catch (err) {
+        addChatMessage("assistant", "❌ 删除失败: " + (err?.message || String(err)));
+      }
+    };
     chip.onclick = () => loadConversation(c.id);
+    chip.appendChild(title);
+    chip.appendChild(del);
     wrap.appendChild(chip);
   });
 }

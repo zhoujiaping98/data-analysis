@@ -87,6 +87,21 @@ async def list_conversations(owner_username: str) -> List[Dict[str, Any]]:
         conn.close()
         return [dict(r) for r in rows]
 
+async def get_conversation(conv_id: str) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute("SELECT * FROM conversations WHERE id=?", (conv_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def delete_conversation(conv_id: str) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+        conn.commit()
+        conn.close()
+
 async def add_message(conv_id: str, role: str, content: str) -> None:
     async with _lock:
         conn = _connect()
