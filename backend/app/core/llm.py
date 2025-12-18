@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 
@@ -37,6 +38,49 @@ class OpenAICompatChatClient:
         except Exception as e:
             log.error("Unexpected chat response: %s", data)
             raise RuntimeError(f"Unexpected chat response: {e}") from e
+
+    async def chat_stream(
+        self, messages: List[Dict[str, str]], *, temperature: float = 0.2
+    ) -> AsyncGenerator[str, None]:
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or line.startswith(":"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if not data_str:
+                        continue
+                    if data_str == "[DONE]":
+                        return
+
+                    try:
+                        data = json.loads(data_str)
+                    except Exception:
+                        continue
+
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0] or {}
+                    delta = choice.get("delta") or {}
+                    chunk = delta.get("content")
+                    if chunk is None:
+                        msg = choice.get("message") or {}
+                        chunk = msg.get("content")
+                    if chunk:
+                        yield chunk
 
 
 class OpenAICompatEmbeddingClient:

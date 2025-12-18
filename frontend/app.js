@@ -2,6 +2,8 @@ const apiBase = "/api";
 let token = localStorage.getItem("token") || "";
 let activeConversationId = localStorage.getItem("convId") || "";
 let chart = null;
+let analysisStreaming = "";
+let analysisMsgBodyEl = null;
 
 const el = (id) => document.getElementById(id);
 
@@ -105,6 +107,7 @@ function addChatMessage(role, content) {
   m.appendChild(b);
   box.appendChild(m);
   box.scrollTop = box.scrollHeight;
+  return { container: m, body: b };
 }
 
 async function loadConversation(convId) {
@@ -120,6 +123,8 @@ async function loadConversation(convId) {
   el("analysisBox").textContent = "";
   el("statusLine").textContent = "";
   el("chartHint").textContent = "";
+  analysisStreaming = "";
+  analysisMsgBodyEl = null;
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
 
@@ -204,11 +209,29 @@ async function sendMessage() {
         el("chartHint").textContent = "无法从该结果自动推断合适的图表（你可以调整 SQL 让结果更适合可视化，例如：维度列 + 数值列）。";
       }
     } else if (eventName === "analysis") {
-      el("analysisBox").textContent = data.text || "";
-      addChatMessage("assistant", data.text || "");
+      if (data.delta) {
+        analysisStreaming += data.delta;
+        el("analysisBox").textContent = analysisStreaming;
+        if (!analysisMsgBodyEl) {
+          analysisMsgBodyEl = addChatMessage("assistant", "").body;
+        }
+        analysisMsgBodyEl.textContent = analysisStreaming;
+      } else {
+        const text = data.text || "";
+        el("analysisBox").textContent = text;
+        if (analysisMsgBodyEl) {
+          analysisMsgBodyEl.textContent = text;
+          analysisMsgBodyEl = null;
+          analysisStreaming = "";
+        } else if (text) {
+          addChatMessage("assistant", text);
+        }
+      }
     } else if (eventName === "error") {
       el("statusLine").textContent = "错误";
       el("analysisBox").innerHTML = `<div class="error">❌ ${data.message || "unknown error"}</div>`;
+      analysisStreaming = "";
+      analysisMsgBodyEl = null;
     } else if (eventName === "done") {
       // ignore
     }

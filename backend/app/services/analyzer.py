@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, AsyncGenerator, Dict, List
 
 from backend.app.core.config import settings
 from backend.app.core.llm import get_chat_client
@@ -19,8 +19,7 @@ ANALYSIS_PROMPT = """你是一名数据分析师。你会收到：
 要求：简洁、可落地，不要输出 Markdown 代码块。
 """
 
-async def analyze(question: str, sql: str, columns: List[str], rows: List[List[Any]]) -> str:
-    client = get_chat_client()
+def _build_messages(question: str, sql: str, columns: List[str], rows: List[List[Any]]) -> List[Dict[str, str]]:
     sample = rows[:50]
     payload = {
         "question": question,
@@ -29,9 +28,28 @@ async def analyze(question: str, sql: str, columns: List[str], rows: List[List[A
         "sample_rows": sample,
         "row_count_shown": len(rows),
     }
-    messages: List[Dict[str, str]] = [
+    return [
         {"role": "system", "content": ANALYSIS_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
-    content = await client.chat(messages, temperature=0.2)
-    return content.strip()
+
+
+async def analyze_stream(
+    question: str, sql: str, columns: List[str], rows: List[List[Any]]
+) -> AsyncGenerator[str, None]:
+    client = get_chat_client()
+    messages = _build_messages(question, sql, columns, rows)
+    try:
+        async for chunk in client.chat_stream(messages, temperature=0.2):
+            yield chunk
+    except Exception:
+        content = await client.chat(messages, temperature=0.2)
+        if content:
+            yield content.strip()
+
+
+async def analyze(question: str, sql: str, columns: List[str], rows: List[List[Any]]) -> str:
+    parts: List[str] = []
+    async for chunk in analyze_stream(question, sql, columns, rows):
+        parts.append(chunk)
+    return "".join(parts).strip()

@@ -16,7 +16,7 @@ from backend.app.core.mysql import run_sql
 from backend.app.services.schema_context import build_schema_context
 from backend.app.services.sql_generator import generate_sql
 from backend.app.services.charting import suggest_echarts_option
-from backend.app.services.analyzer import analyze
+from backend.app.services.analyzer import analyze_stream
 
 router = APIRouter()
 log = logging.getLogger("chat")
@@ -85,8 +85,12 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
             yield sse_event("chart", {"echarts_option": None, "request_id": request_id})
 
         yield sse_event("status", {"stage": "analysis_generation", "request_id": request_id})
-        analysis = await analyze(req.message, sql, cols, rows)
-        yield sse_event("analysis", {"text": analysis, "request_id": request_id})
+        analysis_parts: list[str] = []
+        async for chunk in analyze_stream(req.message, sql, cols, rows):
+            analysis_parts.append(chunk)
+            yield sse_event("analysis", {"delta": chunk, "request_id": request_id})
+        analysis = "".join(analysis_parts).strip()
+        yield sse_event("analysis", {"text": analysis, "request_id": request_id, "done": True})
 
         await add_message(req.conversation_id, "assistant", f"[SQL]\n{sql}\n\n[Analysis]\n{analysis}")
 
