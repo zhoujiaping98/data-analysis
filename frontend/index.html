@@ -60,15 +60,21 @@
       <div id="chartHint" class="muted pad"></div>
     </section>
 
-    <!-- Right: analysis -->
+    <!-- Right: schema preview -->
     <section class="panel panel-analysis">
       <div class="panel-header">
-        <div class="title">分析结论</div>
+        <div class="title">数据预览</div>
+        <button id="btnRefreshSchema" class="ghost">刷新</button>
       </div>
-      <div id="analysisBox" class="analysis"></div>
+      <div class="schema">
+        <div class="subhead pad">库内表</div>
+        <div id="tableList" class="table-list"></div>
+        <div class="subhead pad">预览（前 10 行）</div>
+        <div id="previewWrap" class="table-wrap"></div>
+      </div>
     </section>
   </div>
 
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

@@ -29,6 +29,7 @@ async function login() {
   token = data.access_token;
   localStorage.setItem("token", token);
   setAuthStatus(`已登录：${username}`);
+  await refreshSchemaTables();
   await refreshConversations();
   if (!activeConversationId) {
     await newConversation();
@@ -44,6 +45,104 @@ async function apiFetch(path, options={}) {
   const resp = await fetch(`${apiBase}${path}`, options);
   if (!resp.ok) throw new Error(await resp.text());
   return resp;
+}
+
+function renderTableInto(wrapEl, columns, rows) {
+  if (!wrapEl) return;
+  if (!columns || columns.length === 0) {
+    wrapEl.innerHTML = "<div class='pad muted'>无数据</div>";
+    return;
+  }
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  columns.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach(r => {
+    const tr = document.createElement("tr");
+    r.forEach(v => {
+      const td = document.createElement("td");
+      td.textContent = (v === null || v === undefined) ? "" : String(v);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrapEl.innerHTML = "";
+  wrapEl.appendChild(table);
+}
+
+async function refreshSchemaTables() {
+  const listEl = el("tableList");
+  const previewEl = el("previewWrap");
+  if (!listEl || !previewEl) return;
+
+  if (!token) {
+    listEl.innerHTML = "<div class='pad muted'>登录后可查看表列表</div>";
+    previewEl.innerHTML = "<div class='pad muted'>请选择一个表进行预览</div>";
+    return;
+  }
+
+  listEl.innerHTML = "<div class='pad muted'>加载中...</div>";
+  try {
+    const resp = await apiFetch("/schema/tables");
+    const tables = await resp.json();
+    if (!tables || tables.length === 0) {
+      listEl.innerHTML = "<div class='pad muted'>未发现表</div>";
+      previewEl.innerHTML = "<div class='pad muted'>无可预览数据</div>";
+      return;
+    }
+    listEl.innerHTML = "";
+    tables.forEach(t => {
+      const item = document.createElement("div");
+      item.className = "table-item";
+
+      const meta = document.createElement("div");
+      meta.className = "table-meta";
+      const name = document.createElement("div");
+      name.className = "table-name";
+      name.textContent = t.name;
+      const comment = document.createElement("div");
+      comment.className = "table-comment";
+      comment.textContent = (t.comment || t.type || "").trim();
+      meta.appendChild(name);
+      meta.appendChild(comment);
+
+      const btn = document.createElement("button");
+      btn.className = "btn-mini";
+      btn.type = "button";
+      btn.textContent = "预览";
+      btn.onclick = () => previewTable(t.name);
+
+      item.appendChild(meta);
+      item.appendChild(btn);
+      listEl.appendChild(item);
+    });
+    previewEl.innerHTML = "<div class='pad muted'>请选择一个表进行预览</div>";
+  } catch (e) {
+    listEl.innerHTML = "<div class='pad error'>加载表列表失败</div>";
+    previewEl.innerHTML = "<div class='pad muted'>请检查后端日志</div>";
+  }
+}
+
+async function previewTable(tableName) {
+  const previewEl = el("previewWrap");
+  if (!previewEl) return;
+  previewEl.innerHTML = "<div class='pad muted'>加载预览...</div>";
+  try {
+    const resp = await apiFetch(`/schema/tables/${encodeURIComponent(tableName)}/preview?limit=10`);
+    const data = await resp.json();
+    renderTableInto(previewEl, data.columns, data.rows);
+  } catch (e) {
+    previewEl.innerHTML = "<div class='pad error'>预览失败</div>";
+  }
 }
 
 async function refreshConversations() {
@@ -120,7 +219,6 @@ async function loadConversation(convId) {
   el("chatHistory").innerHTML = "";
   el("sqlBox").textContent = "";
   el("tableWrap").innerHTML = "";
-  el("analysisBox").textContent = "";
   el("statusLine").textContent = "";
   el("chartHint").textContent = "";
   analysisStreaming = "";
@@ -134,35 +232,7 @@ async function loadConversation(convId) {
 }
 
 function renderTable(columns, rows) {
-  const wrap = el("tableWrap");
-  if (!columns || columns.length === 0) {
-    wrap.innerHTML = "<div class='pad muted'>无数据</div>";
-    return;
-  }
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  const trh = document.createElement("tr");
-  columns.forEach(c => {
-    const th = document.createElement("th");
-    th.textContent = c;
-    trh.appendChild(th);
-  });
-  thead.appendChild(trh);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-  rows.forEach(r => {
-    const tr = document.createElement("tr");
-    r.forEach(v => {
-      const td = document.createElement("td");
-      td.textContent = (v === null || v === undefined) ? "" : String(v);
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  wrap.innerHTML = "";
-  wrap.appendChild(table);
+  renderTableInto(el("tableWrap"), columns, rows);
 }
 
 async function sendMessage() {
@@ -211,14 +281,12 @@ async function sendMessage() {
     } else if (eventName === "analysis") {
       if (data.delta) {
         analysisStreaming += data.delta;
-        el("analysisBox").textContent = analysisStreaming;
         if (!analysisMsgBodyEl) {
           analysisMsgBodyEl = addChatMessage("assistant", "").body;
         }
         analysisMsgBodyEl.textContent = analysisStreaming;
       } else {
         const text = data.text || "";
-        el("analysisBox").textContent = text;
         if (analysisMsgBodyEl) {
           analysisMsgBodyEl.textContent = text;
           analysisMsgBodyEl = null;
@@ -229,7 +297,7 @@ async function sendMessage() {
       }
     } else if (eventName === "error") {
       el("statusLine").textContent = "错误";
-      el("analysisBox").innerHTML = `<div class="error">❌ ${data.message || "unknown error"}</div>`;
+      addChatMessage("assistant", "❌ " + (data.message || "unknown error"));
       analysisStreaming = "";
       analysisMsgBodyEl = null;
     } else if (eventName === "done") {
@@ -266,6 +334,7 @@ async function sendMessage() {
 el("btnLogin").onclick = login;
 el("btnNewConv").onclick = newConversation;
 el("btnSend").onclick = sendMessage;
+if (el("btnRefreshSchema")) el("btnRefreshSchema").onclick = refreshSchemaTables;
 
 el("chatInput").addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendMessage();
@@ -273,9 +342,11 @@ el("chatInput").addEventListener("keydown", (e) => {
 
 // Auto login if token exists
 (async () => {
+  await refreshSchemaTables();
   if (token) {
     setAuthStatus("已读取本地 token");
     try {
+      await refreshSchemaTables();
       await refreshConversations();
       if (!activeConversationId) await newConversation();
       else await loadConversation(activeConversationId);

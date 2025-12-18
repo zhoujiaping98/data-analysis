@@ -12,6 +12,7 @@ from backend.app.core.config import settings
 log = logging.getLogger("mysql")
 
 _engine: AsyncEngine | None = None
+_IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 
 def _get_engine() -> AsyncEngine:
     global _engine
@@ -99,3 +100,52 @@ async def fetch_schema_documents() -> List[Dict[str, Any]]:
             }
         )
     return docs
+
+
+def _quote_ident(name: str) -> str:
+    if not _IDENT.fullmatch(name or ""):
+        raise ValueError("Invalid table name")
+    return f"`{name}`"
+
+
+async def list_tables() -> List[Dict[str, Any]]:
+    engine = _get_engine()
+    sql = """
+    SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = :db
+    ORDER BY TABLE_NAME
+    """
+    async with engine.connect() as conn:
+        res = await conn.execute(text(sql), {"db": settings.MYSQL_DATABASE})
+        rows = res.fetchall()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                "name": r.TABLE_NAME,
+                "type": r.TABLE_TYPE,
+                "comment": r.TABLE_COMMENT or "",
+            }
+        )
+    return out
+
+
+async def preview_table(table_name: str, *, limit: int = 10) -> Tuple[List[str], List[List[Any]]]:
+    if limit < 1:
+        limit = 1
+    if limit > 100:
+        limit = 100
+
+    tables = await list_tables()
+    allowed = {t["name"] for t in tables}
+    if table_name not in allowed:
+        raise ValueError("Table not found")
+
+    sql = f"SELECT * FROM {_quote_ident(table_name)} LIMIT :limit"
+    engine = _get_engine()
+    async with engine.connect() as conn:
+        res = await conn.execute(text(sql), {"limit": limit})
+        rows = res.fetchmany(size=limit)
+        cols = list(res.keys())
+    return cols, [list(r) for r in rows]

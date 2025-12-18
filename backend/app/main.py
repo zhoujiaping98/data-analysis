@@ -11,6 +11,7 @@ from backend.app.api.health import router as health_router
 from backend.app.api.auth import router as auth_router
 from backend.app.api.conversations import router as conv_router
 from backend.app.api.chat import router as chat_router
+from backend.app.api.schema import router as schema_router
 from backend.app.core.training import train_schema_on_startup
 from backend.app.core.sqlite_store import init_sqlite
 from backend.app.core.mysql import close_engine
@@ -33,6 +34,7 @@ app.include_router(health_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(conv_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(schema_router, prefix="/api")
 
 # Serve frontend
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
