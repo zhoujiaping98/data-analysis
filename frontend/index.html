@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vanna2 Analytics Tool</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Vanna2 Analytics Tool</div>
+    <div class="auth">
+      <input id="username" placeholder="username" value="guest" />
+      <input id="password" placeholder="password" value="guest" type="password" />
+      <button id="btnLogin">Login</button>
+      <span id="authStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- Left: chat -->
+    <section class="panel panel-chat">
+      <div class="panel-header">
+        <div class="title">对话</div>
+        <button id="btnNewConv" class="ghost">+ 新会话</button>
+      </div>
+      <div class="conv-list" id="convList"></div>
+      <div class="chat-history" id="chatHistory"></div>
+      <div class="chat-input">
+        <textarea id="chatInput" rows="3" placeholder="用自然语言提问，比如：本月按地区的销售额？"></textarea>
+        <button id="btnSend">发送</button>
+      </div>
+    </section>
+
+    <!-- Middle: SQL + table -->
+    <section class="panel panel-sql">
+      <div class="panel-header">
+        <div class="title">SQL 与结果</div>
+        <div id="statusLine" class="muted"></div>
+      </div>
+
+      <div class="sql-box">
+        <div class="subhead">生成的 SQL</div>
+        <pre id="sqlBox" class="code"></pre>
+      </div>
+
+      <div class="table-box">
+        <div class="subhead">查询结果</div>
+        <div id="tableWrap" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <!-- Middle: chart -->
+    <section class="panel panel-chart">
+      <div class="panel-header">
+        <div class="title">图形化</div>
+      </div>
+      <div id="chart" class="chart"></div>
+      <div id="chartHint" class="muted pad"></div>
+    </section>
+
+    <!-- Right: analysis -->
+    <section class="panel panel-analysis">
+      <div class="panel-header">
+        <div class="title">分析结论</div>
+      </div>
+      <div id="analysisBox" class="analysis"></div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
