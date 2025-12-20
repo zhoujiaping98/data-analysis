@@ -507,6 +507,9 @@ el("btnLogin").onclick = login;
 el("btnNewConv").onclick = newConversation;
 el("btnSend").onclick = sendMessage;
 if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
+if (el("btnDrawer")) el("btnDrawer").onclick = () => toggleDrawer(true);
+if (el("btnCloseDrawer")) el("btnCloseDrawer").onclick = () => toggleDrawer(false);
+if (el("drawerOverlay")) el("drawerOverlay").onclick = () => toggleDrawer(false);
 if (el("fileInput")) el("fileInput").addEventListener("change", (e) => {
   const file = e.target.files && e.target.files[0];
   loadSheetNames(file);
@@ -539,3 +542,16 @@ el("chatInput").addEventListener("keydown", (e) => {
     }
   }
 })();
+
+function toggleDrawer(open) {
+  const drawer = el("drawer");
+  const overlay = el("drawerOverlay");
+  if (!drawer || !overlay) return;
+  if (open) {
+    drawer.classList.add("open");
+    overlay.classList.add("open");
+  } else {
+    drawer.classList.remove("open");
+    overlay.classList.remove("open");
+  }
+}

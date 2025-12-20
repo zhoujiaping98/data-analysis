@@ -1,15 +1,21 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vanna2 Analytics Tool</title>
-  <link rel="stylesheet" href="/styles.css?v=3" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;600&family=Oxanium:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=5" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
   <div class="topbar">
-    <div class="brand">Vanna2 Analytics Tool</div>
+    <div class="brand-block">
+      <div class="brand">Vanna2</div>
+      <div class="brand-sub">Analytics Studio</div>
+    </div>
     <div class="auth">
       <input id="username" placeholder="username" value="guest" />
       <input id="password" placeholder="password" value="guest" type="password" />
@@ -19,13 +25,20 @@
   </div>
 
   <div class="layout">
-    <!-- Left: chat -->
-    <section class="panel panel-chat">
+    <aside class="panel panel-sidebar">
       <div class="panel-header">
-        <div class="title">对话</div>
+        <div class="title">会话</div>
         <button id="btnNewConv" class="ghost">+ 新会话</button>
       </div>
       <div class="conv-list" id="convList"></div>
+      <div class="sidebar-hint">快捷键：Ctrl/⌘ + Enter 发送</div>
+    </aside>
+
+    <section class="panel panel-chat">
+      <div class="panel-header">
+        <div class="title">对话</div>
+        <div class="panel-pill">AI Assistant</div>
+      </div>
       <div class="chat-history" id="chatHistory"></div>
       <div class="chat-input">
         <textarea id="chatInput" rows="3" placeholder="用自然语言提问，比如：本月按地区的销售额？"></textarea>
@@ -33,7 +46,6 @@
       </div>
     </section>
 
-    <!-- Middle: SQL + table -->
     <section class="panel panel-sql">
       <div class="panel-header">
         <div class="title">SQL 与结果</div>
@@ -51,7 +63,6 @@
       </div>
     </section>
 
-    <!-- Middle: chart -->
     <section class="panel panel-chart">
       <div class="panel-header">
         <div class="title">图形化</div>
@@ -59,33 +70,37 @@
       <div id="chart" class="chart"></div>
       <div id="chartHint" class="muted pad"></div>
     </section>
-
-    <!-- Right: schema preview -->
-    <section class="panel panel-analysis">
-      <div class="panel-header">
-        <div class="title">数据预览</div>
-        <button id="btnRefreshSchema" class="ghost">刷新</button>
-      </div>
-      <div class="schema">
-        <div class="upload-box pad">
-          <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
-          <select id="sheetSelect" class="select-mini" disabled>
-            <option value="">Sheet</option>
-          </select>
-          <button id="btnUpload" class="btn-mini">上传</button>
-          <span id="uploadStatus" class="muted"></span>
-          <a class="sample-link" href="/sample.csv" download>示例文件下载</a>
-        </div>
-        <div class="subhead pad">已上传文件</div>
-        <div id="uploadList" class="table-list"></div>
-        <div class="subhead pad">库内表</div>
-        <div id="tableList" class="table-list"></div>
-        <div class="subhead pad">预览（前 10 行）</div>
-        <div id="previewWrap" class="table-wrap"></div>
-      </div>
-    </section>
   </div>
 
-  <script src="/app.js?v=6"></script>
+  <button id="btnDrawer" class="drawer-toggle" type="button">数据</button>
+  <div id="drawerOverlay" class="drawer-overlay"></div>
+  <aside id="drawer" class="drawer">
+    <div class="panel-header">
+      <div class="title">数据预览</div>
+      <div class="drawer-actions">
+        <button id="btnRefreshSchema" class="ghost">刷新</button>
+        <button id="btnCloseDrawer" class="ghost">关闭</button>
+      </div>
+    </div>
+    <div class="schema">
+      <div class="upload-box pad">
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
+        <select id="sheetSelect" class="select-mini" disabled>
+          <option value="">Sheet</option>
+        </select>
+        <button id="btnUpload" class="btn-mini">上传</button>
+        <span id="uploadStatus" class="muted"></span>
+        <a class="sample-link" href="/sample.csv" download>示例文件下载</a>
+      </div>
+      <div class="subhead pad">已上传文件</div>
+      <div id="uploadList" class="table-list"></div>
+      <div class="subhead pad">库内表</div>
+      <div id="tableList" class="table-list"></div>
+      <div class="subhead pad">预览（前 10 行）</div>
+      <div id="previewWrap" class="table-wrap"></div>
+    </div>
+  </aside>
+
+  <script src="/app.js?v=7"></script>
 </body>
 </html>
