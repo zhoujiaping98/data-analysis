@@ -301,7 +301,7 @@ async function uploadFile() {
     });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
-    status.textContent = `已上传：${data.table_name}`;
+    status.textContent = `已上传：${data.table_name}，可在对话中直接查询该表（如：统计按地区的销售额）`;
     input.value = "";
     if (sheetSelect) {
       sheetSelect.innerHTML = "";

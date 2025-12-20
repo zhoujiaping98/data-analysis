@@ -1,0 +1,11 @@
+product_id,product_name,category,region,order_date,quantity,unit_price
+1001,Alpha Phone,Electronics,East,2024-01-05,3,1999
+1002,Beta Laptop,Electronics,North,2024-01-07,1,6999
+1003,Cloud Notebook,Office,South,2024-01-10,12,18
+1004,Delta Chair,Furniture,West,2024-01-12,2,399
+1005,Edge Monitor,Electronics,East,2024-01-15,4,1299
+1006,Flux Pen,Office,North,2024-01-18,30,6
+1007,Glow Desk Lamp,Furniture,South,2024-01-20,5,159
+1008,Hex Keyboard,Electronics,West,2024-01-22,7,299
+1009,Iris Mouse,Electronics,East,2024-01-25,9,149
+1010,Jet Stapler,Office,North,2024-01-28,6,25
