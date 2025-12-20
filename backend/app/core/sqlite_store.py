@@ -4,7 +4,7 @@ import os
 import sqlite3
 import asyncio
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_PATH = os.path.abspath("./data/app.sqlite3")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -43,8 +43,22 @@ async def init_sqlite() -> None:
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS file_uploads (
+                id TEXT PRIMARY KEY,
+                owner_username TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                sheet_name TEXT,
+                table_name TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                columns_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
+        cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
+        if "sheet_name" not in cols:
+            cur.execute("ALTER TABLE file_uploads ADD COLUMN sheet_name TEXT")
         conn.commit()
         conn.close()
 
@@ -83,6 +97,91 @@ async def list_conversations(owner_username: str) -> List[Dict[str, Any]]:
         rows = conn.execute(
             "SELECT * FROM conversations WHERE owner_username=? ORDER BY created_at DESC",
             (owner_username,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+async def add_file_upload(
+    file_id: str,
+    owner_username: str,
+    filename: str,
+    sheet_name: str | None,
+    table_name: str,
+    row_count: int,
+    columns_json: str,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO file_uploads(id, owner_username, filename, sheet_name, table_name, row_count, columns_json, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (
+                file_id,
+                owner_username,
+                filename,
+                sheet_name,
+                table_name,
+                row_count,
+                columns_json,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def list_file_uploads(owner_username: str) -> List[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM file_uploads WHERE owner_username=? ORDER BY created_at DESC",
+            (owner_username,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+async def get_file_upload(file_id: str) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute("SELECT * FROM file_uploads WHERE id=?", (file_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def get_file_upload_by_table(owner_username: str, table_name: str) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT * FROM file_uploads WHERE owner_username=? AND table_name=?",
+            (owner_username, table_name),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def delete_file_upload(file_id: str) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute("DELETE FROM file_uploads WHERE id=?", (file_id,))
+        conn.commit()
+        conn.close()
+
+async def delete_file_uploads(file_ids: List[str]) -> None:
+    if not file_ids:
+        return
+    async with _lock:
+        conn = _connect()
+        placeholders = ",".join(["?"] * len(file_ids))
+        conn.execute(f"DELETE FROM file_uploads WHERE id IN ({placeholders})", file_ids)
+        conn.commit()
+        conn.close()
+
+async def list_expired_file_uploads(ttl_hours: int) -> List[Dict[str, Any]]:
+    if ttl_hours <= 0:
+        return []
+    cutoff = datetime.utcnow() - timedelta(hours=ttl_hours)
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM file_uploads WHERE created_at < ? ORDER BY created_at ASC",
+            (cutoff.isoformat(),),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]

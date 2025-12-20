@@ -12,9 +12,11 @@ from backend.app.api.auth import router as auth_router
 from backend.app.api.conversations import router as conv_router
 from backend.app.api.chat import router as chat_router
 from backend.app.api.schema import router as schema_router
+from backend.app.api.files import router as files_router
 from backend.app.core.training import train_schema_on_startup
 from backend.app.core.sqlite_store import init_sqlite
 from backend.app.core.mysql import close_engine
+from backend.app.core.uploads import cleanup_expired_uploads
 
 setup_logging()
 
@@ -35,6 +37,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(conv_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(schema_router, prefix="/api")
+app.include_router(files_router, prefix="/api")
 
 # Serve frontend
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
@@ -44,6 +47,7 @@ app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 async def _startup() -> None:
     # init sqlite for user + conversation store
     await init_sqlite()
+    await cleanup_expired_uploads()
     # train schema index (skip if mysql not configured)
     await train_schema_on_startup()
 

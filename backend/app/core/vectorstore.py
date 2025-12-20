@@ -67,6 +67,37 @@ class LocalHashEmbeddingFunction(EmbeddingFunction):
         return [self._embed_one(t) for t in list(input)]
 
 
+class ResilientEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, embed_client: OpenAICompatEmbeddingClient, fallback_dim: int = 384):
+        self._remote = RemoteEmbeddingFunction(embed_client)
+        self._dim: int | None = None
+        self._fallback_dim = fallback_dim
+        self._fallback = LocalHashEmbeddingFunction(dim=fallback_dim)
+
+    def _ensure_dim(self, dim: int) -> None:
+        if self._dim is None:
+            self._dim = dim
+            if self._fallback_dim != dim:
+                self._fallback_dim = dim
+                self._fallback = LocalHashEmbeddingFunction(dim=dim)
+            return
+        if dim != self._dim:
+            raise ValueError(f"Embedding dimension changed: {self._dim} -> {dim}")
+
+    def __call__(self, input: Documents) -> Embeddings:
+        try:
+            out = self._remote(input)
+            if out:
+                self._ensure_dim(len(out[0]))
+            return out
+        except Exception as e:
+            log.warning("Remote embedding failed; using local fallback. err=%s", e)
+            if self._dim is not None and self._fallback_dim != self._dim:
+                self._fallback_dim = self._dim
+                self._fallback = LocalHashEmbeddingFunction(dim=self._dim)
+            return self._fallback(input)
+
+
 class SchemaVectorStore:
     def __init__(self):
         os.makedirs(settings.CHROMA_PERSIST_DIR, exist_ok=True)
@@ -75,7 +106,7 @@ class SchemaVectorStore:
         embed_fn: EmbeddingFunction = LocalHashEmbeddingFunction()
         if settings.has_embed_config:
             try:
-                embed_fn = RemoteEmbeddingFunction(get_embed_client())
+                embed_fn = ResilientEmbeddingFunction(get_embed_client())
             except Exception as e:
                 log.warning("Embedding not ready, fallback to local hashing. err=%s", e)
 

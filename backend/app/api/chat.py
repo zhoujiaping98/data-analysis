@@ -12,11 +12,14 @@ from backend.app.schemas.chat import ChatRequest
 from backend.app.core.sse import sse_event, sse_stream
 from backend.app.core.config import settings
 from backend.app.core.sqlite_store import add_message, upsert_conversation, get_messages
-from backend.app.core.mysql import run_sql
+from backend.app.core.mysql import run_sql, extract_table_names, list_tables
 from backend.app.services.schema_context import build_schema_context
 from backend.app.services.sql_generator import generate_sql
 from backend.app.services.charting import suggest_echarts_option
 from backend.app.services.analyzer import analyze_stream
+from backend.app.core.resilience import CircuitOpenError
+from backend.app.core.sqlite_store import list_file_uploads
+from backend.app.core.uploads import cleanup_expired_uploads
 
 router = APIRouter()
 log = logging.getLogger("chat")
@@ -28,6 +31,7 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="LLM config missing (.env)")
     if not settings.has_mysql_config:
         raise HTTPException(status_code=500, detail="MySQL config missing (.env)")
+    await cleanup_expired_uploads()
 
     async def gen() -> AsyncGenerator[str, None]:
         request_id = str(uuid.uuid4())
@@ -44,8 +48,24 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
         schema_context = build_schema_context(req.message)
 
         yield sse_event("status", {"stage": "sql_generation", "request_id": request_id})
-        sql = await generate_sql(req.message, schema_context, history)
+        try:
+            sql = await generate_sql(req.message, schema_context, history)
+        except CircuitOpenError as e:
+            yield sse_event("error", {"message": str(e), "request_id": request_id, "where": "llm_sql"})
+            yield sse_event("done", {"ok": False, "request_id": request_id})
+            return
         yield sse_event("sql", {"sql": sql, "request_id": request_id})
+
+        # Enforce table allowlist (base tables + user uploads) to avoid cross-schema access.
+        try:
+            base_tables = await list_tables()
+        except Exception as e:
+            yield sse_event("error", {"message": str(e), "request_id": request_id, "where": "schema_tables"})
+            yield sse_event("done", {"ok": False, "request_id": request_id})
+            return
+        uploads = await list_file_uploads(user["username"])
+        upload_names = {u["table_name"] for u in uploads}
+        allowed_tables = {t["name"] for t in base_tables if not t["name"].startswith("tmp_")} | upload_names
 
         # Execute (retry: regenerate SQL if SQL error)
         cols = []
@@ -53,9 +73,26 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
         last_err: str | None = None
         for attempt in range(settings.MAX_SQL_RETRY + 1):
             try:
+                used_tables = set(extract_table_names(sql))
+                if used_tables and not used_tables.issubset(allowed_tables):
+                    last_err = "SQL references tables not allowed for this user."
+                    yield sse_event(
+                        "error",
+                        {
+                            "message": last_err,
+                            "request_id": request_id,
+                            "where": "sql_allowlist",
+                            "tables": sorted(list(used_tables - allowed_tables)),
+                        },
+                    )
+                    break
                 yield sse_event("status", {"stage": "sql_execution", "attempt": attempt, "request_id": request_id})
                 cols, rows = await run_sql(sql, max_rows=settings.MAX_ROWS)
                 last_err = None
+                break
+            except CircuitOpenError as e:
+                last_err = str(e)
+                yield sse_event("error", {"message": last_err, "request_id": request_id, "where": "sql_execution"})
                 break
             except Exception as e:
                 last_err = str(e)
@@ -68,7 +105,12 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
                     "Only output SQL. "
                     f"Error: {last_err}\nSQL: {sql}"
                 )
-                sql = await generate_sql(fix_prompt, schema_context, history)
+                try:
+                    sql = await generate_sql(fix_prompt, schema_context, history)
+                except CircuitOpenError as e:
+                    last_err = str(e)
+                    yield sse_event("error", {"message": last_err, "request_id": request_id, "where": "llm_sql"})
+                    break
                 yield sse_event("sql", {"sql": sql, "request_id": request_id, "note": "retry_rewrite"})
 
         if last_err is not None:

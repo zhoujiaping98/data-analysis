@@ -1,26 +1,53 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Tuple
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+from sqlalchemy import create_engine
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, OperationalError, TimeoutError as SATimeoutError
 
 from backend.app.core.config import settings
+from backend.app.core.resilience import CircuitBreaker, async_retry
 
 log = logging.getLogger("mysql")
 
 _engine: AsyncEngine | None = None
+_sync_engine = None
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
+_mysql_breaker = CircuitBreaker(
+    "mysql",
+    failure_threshold=settings.MYSQL_CB_FAILURES,
+    recovery_timeout_s=settings.MYSQL_CB_RECOVERY_SECONDS,
+)
 
 def _get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         if not settings.has_mysql_config:
             raise RuntimeError("MySQL config missing")
-        _engine = create_async_engine(settings.mysql_dsn, pool_pre_ping=True)
+        _engine = create_async_engine(
+            settings.mysql_dsn,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS},
+        )
     return _engine
+
+def _get_sync_engine():
+    global _sync_engine
+    if _sync_engine is None:
+        if not settings.has_mysql_config:
+            raise RuntimeError("MySQL config missing")
+        sync_dsn = settings.mysql_dsn.replace("mysql+aiomysql", "mysql+pymysql")
+        _sync_engine = create_engine(
+            sync_dsn,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS},
+        )
+    return _sync_engine
 
 
 async def close_engine() -> None:
@@ -29,10 +56,77 @@ async def close_engine() -> None:
         return
     await _engine.dispose()
     _engine = None
+    global _sync_engine
+    if _sync_engine is not None:
+        _sync_engine.dispose()
+        _sync_engine = None
 
 
 _BAD_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|GRANT|REVOKE)\b", re.I)
 _GOOD_PREFIX = re.compile(r"^\s*(SELECT|WITH)\b", re.I)
+
+def _is_retryable_mysql(err: BaseException) -> bool:
+    if isinstance(err, (asyncio.TimeoutError, SATimeoutError)):
+        return True
+    if isinstance(err, DBAPIError):
+        if getattr(err, "connection_invalidated", False):
+            return True
+        return isinstance(err, OperationalError)
+    return False
+
+async def _apply_query_timeout(conn) -> None:
+    if settings.MYSQL_QUERY_TIMEOUT_SECONDS <= 0:
+        return
+    try:
+        ms = int(settings.MYSQL_QUERY_TIMEOUT_SECONDS * 1000)
+        await conn.execute(text("SET SESSION MAX_EXECUTION_TIME=:ms"), {"ms": ms})
+    except Exception:
+        # Best effort: not all MySQL flavors support this.
+        pass
+
+async def _with_timeout(coro):
+    if settings.MYSQL_QUERY_TIMEOUT_SECONDS <= 0:
+        return await coro
+    return await asyncio.wait_for(coro, timeout=settings.MYSQL_QUERY_TIMEOUT_SECONDS)
+
+async def _execute_fetchmany(sql: str, params: Dict[str, Any] | None, max_rows: int) -> Tuple[List[str], List[Any]]:
+    engine = _get_engine()
+    async with engine.connect() as conn:
+        await _apply_query_timeout(conn)
+        res = await conn.execute(text(sql), params or {})
+        rows = res.fetchmany(size=max_rows)
+        cols = list(res.keys())
+    return cols, rows
+
+async def _execute_fetchall(sql: str, params: Dict[str, Any] | None) -> Tuple[List[str], List[Any]]:
+    engine = _get_engine()
+    async with engine.connect() as conn:
+        await _apply_query_timeout(conn)
+        res = await conn.execute(text(sql), params or {})
+        rows = res.fetchall()
+        cols = list(res.keys())
+    return cols, rows
+
+async def _execute_noresult(sql: str, params: Dict[str, Any] | None) -> None:
+    engine = _get_engine()
+    async with engine.connect() as conn:
+        await _apply_query_timeout(conn)
+        await conn.execute(text(sql), params or {})
+
+async def _with_mysql_retry(op):
+    _mysql_breaker.check()
+    try:
+        result = await async_retry(
+            op,
+            retries=settings.MYSQL_MAX_RETRIES,
+            base_delay_s=settings.MYSQL_RETRY_BASE_SECONDS,
+            should_retry=_is_retryable_mysql,
+        )
+        _mysql_breaker.record_success()
+        return result
+    except Exception:
+        _mysql_breaker.record_failure()
+        raise
 
 def validate_readonly_sql(sql: str) -> None:
     if not _GOOD_PREFIX.search(sql):
@@ -43,26 +137,24 @@ def validate_readonly_sql(sql: str) -> None:
 
 async def run_sql(sql: str, max_rows: int) -> Tuple[List[str], List[List[Any]]]:
     validate_readonly_sql(sql)
-    engine = _get_engine()
-    async with engine.connect() as conn:
-        res = await conn.execute(text(sql))
-        rows = res.fetchmany(size=max_rows)
-        cols = list(res.keys())
+    async def _op():
+        return await _with_timeout(_execute_fetchmany(sql, None, max_rows))
+
+    cols, rows = await _with_mysql_retry(_op)
     return cols, [list(r) for r in rows]
 
 
 async def fetch_schema_documents() -> List[Dict[str, Any]]:
     """Fetch schema info from information_schema and return docs for vector store."""
-    engine = _get_engine()
     sql = """
     SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT
     FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = :db
     ORDER BY TABLE_NAME, ORDINAL_POSITION
     """
-    async with engine.connect() as conn:
-        res = await conn.execute(text(sql), {"db": settings.MYSQL_DATABASE})
-        rows = res.fetchall()
+    async def _op():
+        return await _with_timeout(_execute_fetchall(sql, {"db": settings.MYSQL_DATABASE}))
+    _, rows = await _with_mysql_retry(_op)
 
     by_table: Dict[str, List[Dict[str, Any]]] = {}
     for r in rows:
@@ -102,6 +194,42 @@ async def fetch_schema_documents() -> List[Dict[str, Any]]:
     return docs
 
 
+async def fetch_schema_documents_for_table(table_name: str) -> List[Dict[str, Any]]:
+    if not _IDENT.fullmatch(table_name or ""):
+        raise ValueError("Invalid table name")
+    sql = """
+    SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :table
+    ORDER BY ORDINAL_POSITION
+    """
+    async def _op():
+        return await _with_timeout(
+            _execute_fetchall(sql, {"db": settings.MYSQL_DATABASE, "table": table_name})
+        )
+    _, rows = await _with_mysql_retry(_op)
+
+    if not rows:
+        return []
+
+    lines = [f"TABLE {table_name}:"]
+    for r in rows:
+        extra = []
+        if r.COLUMN_KEY:
+            extra.append(f"key={r.COLUMN_KEY}")
+        if r.IS_NULLABLE:
+            extra.append(f"nullable={r.IS_NULLABLE}")
+        if r.COLUMN_COMMENT:
+            extra.append(f"comment={r.COLUMN_COMMENT}")
+        meta = ", ".join(extra)
+        lines.append(f"  - {r.COLUMN_NAME} ({r.COLUMN_TYPE}) {meta}".rstrip())
+    text_blob = "\n".join(lines)
+
+    return [
+        {"id": f"table::{table_name}", "text": text_blob, "metadata": {"table": table_name}}
+    ]
+
+
 def _quote_ident(name: str) -> str:
     if not _IDENT.fullmatch(name or ""):
         raise ValueError("Invalid table name")
@@ -109,16 +237,15 @@ def _quote_ident(name: str) -> str:
 
 
 async def list_tables() -> List[Dict[str, Any]]:
-    engine = _get_engine()
     sql = """
     SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT
     FROM INFORMATION_SCHEMA.TABLES
     WHERE TABLE_SCHEMA = :db
     ORDER BY TABLE_NAME
     """
-    async with engine.connect() as conn:
-        res = await conn.execute(text(sql), {"db": settings.MYSQL_DATABASE})
-        rows = res.fetchall()
+    async def _op():
+        return await _with_timeout(_execute_fetchall(sql, {"db": settings.MYSQL_DATABASE}))
+    _, rows = await _with_mysql_retry(_op)
     out: List[Dict[str, Any]] = []
     for r in rows:
         out.append(
@@ -143,9 +270,38 @@ async def preview_table(table_name: str, *, limit: int = 10) -> Tuple[List[str],
         raise ValueError("Table not found")
 
     sql = f"SELECT * FROM {_quote_ident(table_name)} LIMIT :limit"
-    engine = _get_engine()
-    async with engine.connect() as conn:
-        res = await conn.execute(text(sql), {"limit": limit})
-        rows = res.fetchmany(size=limit)
-        cols = list(res.keys())
+    async def _op():
+        return await _with_timeout(_execute_fetchmany(sql, {"limit": limit}, limit))
+    cols, rows = await _with_mysql_retry(_op)
     return cols, [list(r) for r in rows]
+
+
+def import_dataframe(table_name: str, df) -> None:
+    if not _IDENT.fullmatch(table_name or ""):
+        raise ValueError("Invalid table name")
+    engine = _get_sync_engine()
+    df.to_sql(table_name, con=engine, if_exists="replace", index=False)
+
+
+async def drop_table(table_name: str) -> None:
+    sql = f"DROP TABLE IF EXISTS {_quote_ident(table_name)}"
+    async def _op():
+        return await _with_timeout(_execute_noresult(sql, None))
+    await _with_mysql_retry(_op)
+
+
+_TABLE_REF_RE = re.compile(r"\b(from|join)\s+([`\"\\[]?[\w]+[`\"\\]]?(?:\.[`\"\\[]?[\w]+[`\"\\]]?)?)", re.I)
+
+def extract_table_names(sql: str) -> List[str]:
+    names: List[str] = []
+    for m in _TABLE_REF_RE.finditer(sql or ""):
+        ident = m.group(2)
+        if not ident:
+            continue
+        if ident.startswith("("):
+            continue
+        ident = ident.strip("`\"[]")
+        if "." in ident:
+            ident = ident.split(".")[-1]
+        names.append(ident)
+    return names

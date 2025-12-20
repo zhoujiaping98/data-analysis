@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vanna2 Analytics Tool</title>
-  <link rel="stylesheet" href="/styles.css?v=2" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -67,6 +67,16 @@
         <button id="btnRefreshSchema" class="ghost">刷新</button>
       </div>
       <div class="schema">
+        <div class="upload-box pad">
+          <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
+          <select id="sheetSelect" class="select-mini" disabled>
+            <option value="">Sheet</option>
+          </select>
+          <button id="btnUpload" class="btn-mini">上传</button>
+          <span id="uploadStatus" class="muted"></span>
+        </div>
+        <div class="subhead pad">已上传文件</div>
+        <div id="uploadList" class="table-list"></div>
         <div class="subhead pad">库内表</div>
         <div id="tableList" class="table-list"></div>
         <div class="subhead pad">预览（前 10 行）</div>
@@ -75,6 +85,6 @@
     </section>
   </div>
 
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>

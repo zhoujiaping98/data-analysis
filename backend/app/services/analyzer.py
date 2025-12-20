@@ -43,9 +43,12 @@ async def analyze_stream(
         async for chunk in client.chat_stream(messages, temperature=0.2):
             yield chunk
     except Exception:
-        content = await client.chat(messages, temperature=0.2)
-        if content:
-            yield content.strip()
+        try:
+            content = await client.chat(messages, temperature=0.2)
+            if content:
+                yield content.strip()
+        except Exception:
+            yield "分析服务暂时不可用，请稍后再试。"
 
 
 async def analyze(question: str, sql: str, columns: List[str], rows: List[List[Any]]) -> str:

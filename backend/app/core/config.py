@@ -29,12 +29,20 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = "deepseek-chat"
     LLM_TEMPERATURE: float = 0.2
     LLM_TIMEOUT_SECONDS: int = 90
+    LLM_MAX_RETRIES: int = 2
+    LLM_RETRY_BASE_SECONDS: float = 0.5
+    LLM_CB_FAILURES: int = 3
+    LLM_CB_RECOVERY_SECONDS: int = 30
 
     # Embeddings (Qwen3)
     EMBED_BASE_URL: str = ""
     EMBED_API_KEY: str = ""
     EMBED_MODEL: str = "Qwen3-Embedding-8B"
     EMBED_TIMEOUT_SECONDS: int = 60
+    EMBED_MAX_RETRIES: int = 2
+    EMBED_RETRY_BASE_SECONDS: float = 0.5
+    EMBED_CB_FAILURES: int = 3
+    EMBED_CB_RECOVERY_SECONDS: int = 30
 
     # Vector store
     CHROMA_PERSIST_DIR: str = "./data/chroma"
@@ -43,6 +51,20 @@ class Settings(BaseSettings):
     # limits
     MAX_ROWS: int = 500
     MAX_SQL_RETRY: int = 2
+
+    # MySQL resilience
+    MYSQL_CONNECT_TIMEOUT_SECONDS: int = 5
+    MYSQL_QUERY_TIMEOUT_SECONDS: int = 30
+    MYSQL_MAX_RETRIES: int = 1
+    MYSQL_RETRY_BASE_SECONDS: float = 0.3
+    MYSQL_CB_FAILURES: int = 3
+    MYSQL_CB_RECOVERY_SECONDS: int = 30
+
+    # File upload limits
+    FILE_UPLOAD_MAX_BYTES: int = 20 * 1024 * 1024
+    FILE_UPLOAD_MAX_ROWS: int = 200_000
+    FILE_UPLOAD_MAX_COLS: int = 200
+    FILE_UPLOAD_TTL_HOURS: int = 72
 
     @staticmethod
     def _strip_inline_comment(value: Any) -> Any:
@@ -55,16 +77,31 @@ class Settings(BaseSettings):
         "JWT_EXPIRE_MINUTES",
         "MYSQL_PORT",
         "LLM_TIMEOUT_SECONDS",
+        "LLM_MAX_RETRIES",
+        "LLM_CB_FAILURES",
+        "LLM_CB_RECOVERY_SECONDS",
         "EMBED_TIMEOUT_SECONDS",
+        "EMBED_MAX_RETRIES",
+        "EMBED_CB_FAILURES",
+        "EMBED_CB_RECOVERY_SECONDS",
         "MAX_ROWS",
         "MAX_SQL_RETRY",
+        "MYSQL_CONNECT_TIMEOUT_SECONDS",
+        "MYSQL_QUERY_TIMEOUT_SECONDS",
+        "MYSQL_MAX_RETRIES",
+        "MYSQL_CB_FAILURES",
+        "MYSQL_CB_RECOVERY_SECONDS",
+        "FILE_UPLOAD_MAX_BYTES",
+        "FILE_UPLOAD_MAX_ROWS",
+        "FILE_UPLOAD_MAX_COLS",
+        "FILE_UPLOAD_TTL_HOURS",
         mode="before",
     )
     @classmethod
     def _strip_int_comments(cls, v: Any) -> Any:
         return cls._strip_inline_comment(v)
 
-    @field_validator("LLM_TEMPERATURE", mode="before")
+    @field_validator("LLM_TEMPERATURE", "LLM_RETRY_BASE_SECONDS", "EMBED_RETRY_BASE_SECONDS", "MYSQL_RETRY_BASE_SECONDS", mode="before")
     @classmethod
     def _strip_float_comments(cls, v: Any) -> Any:
         return cls._strip_inline_comment(v)

@@ -4,13 +4,38 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.api.deps import get_current_user
 from backend.app.core.mysql import list_tables, preview_table
+from backend.app.core.sqlite_store import list_file_uploads
+from backend.app.core.resilience import CircuitOpenError
+from backend.app.core.uploads import cleanup_expired_uploads
 
 router = APIRouter()
 
 
 @router.get("/schema/tables")
 async def schema_tables(user=Depends(get_current_user)):
-    return await list_tables()
+    try:
+        await cleanup_expired_uploads()
+        base = await list_tables()
+        uploads = await list_file_uploads(user["username"])
+        upload_map = {u["table_name"]: u for u in uploads}
+        out = []
+        for t in base:
+            name = t["name"]
+            if name.startswith("tmp_") and name not in upload_map:
+                continue
+            if name in upload_map:
+                meta = upload_map[name]
+                extra = meta.get("sheet_name") or ""
+                suffix = f" / {extra}" if extra else ""
+                t = {
+                    "name": name,
+                    "type": "UPLOAD",
+                    "comment": f"{meta['filename']}{suffix}",
+                }
+            out.append(t)
+        return out
+    except CircuitOpenError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @router.get("/schema/tables/{table_name}/preview")
@@ -20,8 +45,11 @@ async def schema_table_preview(
     user=Depends(get_current_user),
 ):
     try:
+        await cleanup_expired_uploads()
         cols, rows = await preview_table(table_name, limit=limit)
         return {"table": table_name, "columns": cols, "rows": rows, "row_count": len(rows)}
+    except CircuitOpenError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         msg = str(e)
         if msg.lower() == "table not found":

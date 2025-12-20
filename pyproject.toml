@@ -18,6 +18,10 @@ dependencies = [
   "passlib[bcrypt]>=1.7",
   "chromadb>=0.5",
   "orjson>=3.10",
+  "python-multipart>=0.0.9",
+  "pandas>=2.2",
+  "openpyxl>=3.1",
+  "xlrd>=2.0",
 ]
 
 [project.optional-dependencies]

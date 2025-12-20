@@ -30,6 +30,7 @@ async function login() {
   localStorage.setItem("token", token);
   setAuthStatus(`已登录：${username}`);
   await refreshSchemaTables();
+  await refreshUploads();
   await refreshConversations();
   if (!activeConversationId) {
     await newConversation();
@@ -141,7 +142,178 @@ async function previewTable(tableName) {
     const data = await resp.json();
     renderTableInto(previewEl, data.columns, data.rows);
   } catch (e) {
-    previewEl.innerHTML = "<div class='pad error'>预览失败</div>";
+    let msg = e?.message || String(e);
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed && parsed.detail) msg = parsed.detail;
+    } catch (_) {}
+    previewEl.innerHTML = `<div class='pad error'>预览失败：${msg}</div>`;
+  }
+}
+
+async function refreshUploads() {
+  const listEl = el("uploadList");
+  if (!listEl) return;
+  if (!token) {
+    listEl.innerHTML = "<div class='pad muted'>登录后可查看上传文件</div>";
+    return;
+  }
+  listEl.innerHTML = "<div class='pad muted'>加载中...</div>";
+  try {
+    const resp = await apiFetch("/files");
+    const files = await resp.json();
+    if (!files || files.length === 0) {
+      listEl.innerHTML = "<div class='pad muted'>无上传文件</div>";
+      return;
+    }
+    listEl.innerHTML = "";
+    files.forEach(f => {
+      const item = document.createElement("div");
+      item.className = "table-item upload-item";
+
+      const meta = document.createElement("div");
+      meta.className = "table-meta";
+      const name = document.createElement("div");
+      name.className = "table-name";
+      name.textContent = f.filename || f.table_name;
+      const comment = document.createElement("div");
+      comment.className = "table-comment";
+      const sheet = f.sheet_name ? ` / ${f.sheet_name}` : "";
+      comment.textContent = `${f.table_name}${sheet} | ${f.row_count || 0} rows`;
+      meta.appendChild(name);
+      meta.appendChild(comment);
+
+      const actions = document.createElement("div");
+      actions.className = "upload-actions";
+      const previewBtn = document.createElement("button");
+      previewBtn.className = "btn-mini";
+      previewBtn.type = "button";
+      previewBtn.textContent = "预览";
+      previewBtn.onclick = () => previewTable(f.table_name);
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn-mini danger";
+      delBtn.type = "button";
+      delBtn.textContent = "删除";
+      delBtn.onclick = () => deleteUpload(f.id);
+      actions.appendChild(previewBtn);
+      actions.appendChild(delBtn);
+
+      item.appendChild(meta);
+      item.appendChild(actions);
+      listEl.appendChild(item);
+    });
+  } catch (e) {
+    listEl.innerHTML = "<div class='pad error'>加载失败</div>";
+  }
+}
+
+async function deleteUpload(fileId) {
+  if (!confirm("确定删除该上传文件吗？")) return;
+  try {
+    await apiFetch(`/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+    await refreshUploads();
+    await refreshSchemaTables();
+  } catch (e) {
+    addChatMessage("assistant", "删除失败");
+  }
+}
+
+async function loadSheetNames(file) {
+  const select = el("sheetSelect");
+  const status = el("uploadStatus");
+  if (!select) return;
+  select.innerHTML = "";
+  select.disabled = true;
+  if (!file) return;
+  if (!token) {
+    if (status) status.textContent = "请先登录";
+    return;
+  }
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".csv")) {
+    const opt = document.createElement("option");
+    opt.value = "(csv)";
+    opt.textContent = "(csv)";
+    opt.selected = true;
+    select.appendChild(opt);
+    select.disabled = true;
+    return;
+  }
+
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const resp = await fetch(`${apiBase}/files/sheets`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` },
+      body: form
+    });
+    if (!resp.ok) {
+      const detail = await resp.text();
+      throw new Error(detail || "sheet list error");
+    }
+    const data = await resp.json();
+    const sheets = data.sheets || [];
+    if (sheets.length === 0) return;
+    sheets.forEach((s, idx) => {
+      const opt = document.createElement("option");
+      opt.value = s;
+      opt.textContent = s;
+      if (idx === 0) opt.selected = true;
+      select.appendChild(opt);
+    });
+    if (sheets.length === 1 && sheets[0] === "(csv)") {
+      select.disabled = true;
+    } else {
+      select.disabled = false;
+    }
+  } catch (e) {
+    if (status) status.textContent = `获取 Sheet 失败：${e.message || e}`;
+  }
+}
+
+async function uploadFile() {
+  const input = el("fileInput");
+  const status = el("uploadStatus");
+  if (!input || !status) return;
+  if (!token) {
+    status.textContent = "请先登录";
+    return;
+  }
+  const file = input.files && input.files[0];
+  if (!file) {
+    status.textContent = "请选择文件";
+    return;
+  }
+  status.textContent = "上传中...";
+  const form = new FormData();
+  form.append("file", file);
+  const sheetSelect = el("sheetSelect");
+  const sheetName = sheetSelect && !sheetSelect.disabled ? sheetSelect.value : "";
+  if (sheetName && sheetName !== "(csv)") {
+    form.append("sheet_name", sheetName);
+  }
+  try {
+    const resp = await fetch(`${apiBase}/files/upload`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` },
+      body: form
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    status.textContent = `已上传：${data.table_name}`;
+    input.value = "";
+    if (sheetSelect) {
+      sheetSelect.innerHTML = "";
+      sheetSelect.disabled = true;
+    }
+    await refreshUploads();
+    await refreshSchemaTables();
+    if (data.table_name) {
+      await previewTable(data.table_name);
+    }
+  } catch (e) {
+    status.textContent = "上传失败";
   }
 }
 
@@ -334,7 +506,15 @@ async function sendMessage() {
 el("btnLogin").onclick = login;
 el("btnNewConv").onclick = newConversation;
 el("btnSend").onclick = sendMessage;
-if (el("btnRefreshSchema")) el("btnRefreshSchema").onclick = refreshSchemaTables;
+if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
+if (el("fileInput")) el("fileInput").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  loadSheetNames(file);
+});
+if (el("btnRefreshSchema")) el("btnRefreshSchema").onclick = async () => {
+  await refreshSchemaTables();
+  await refreshUploads();
+};
 
 el("chatInput").addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendMessage();
@@ -343,10 +523,12 @@ el("chatInput").addEventListener("keydown", (e) => {
 // Auto login if token exists
 (async () => {
   await refreshSchemaTables();
+  await refreshUploads();
   if (token) {
     setAuthStatus("已读取本地 token");
     try {
       await refreshSchemaTables();
+      await refreshUploads();
       await refreshConversations();
       if (!activeConversationId) await newConversation();
       else await loadConversation(activeConversationId);
