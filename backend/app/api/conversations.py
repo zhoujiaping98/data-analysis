@@ -17,7 +17,7 @@ router = APIRouter()
 @router.post("/conversations", response_model=CreateConversationResponse)
 async def create_conversation(user=Depends(get_current_user)):
     conv_id = str(uuid.uuid4())
-    await upsert_conversation(conv_id, owner_username=user["username"], title="New Conversation")
+    await upsert_conversation(conv_id, owner_username=user["username"])
     return CreateConversationResponse(conversation_id=conv_id)
 
 @router.get("/conversations")

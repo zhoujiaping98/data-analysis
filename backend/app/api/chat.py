@@ -11,7 +11,7 @@ from backend.app.api.deps import get_current_user
 from backend.app.schemas.chat import ChatRequest
 from backend.app.core.sse import sse_event, sse_stream
 from backend.app.core.config import settings
-from backend.app.core.sqlite_store import add_message, upsert_conversation, get_messages
+from backend.app.core.sqlite_store import add_message, upsert_conversation, get_messages, get_conversation
 from backend.app.core.mysql import run_sql, extract_table_names, list_tables
 from backend.app.services.schema_context import build_schema_context
 from backend.app.services.sql_generator import generate_sql
@@ -39,6 +39,12 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
         # Ensure conversation exists
         await upsert_conversation(req.conversation_id, owner_username=user["username"])
         await add_message(req.conversation_id, "user", req.message)
+        conv = await get_conversation(req.conversation_id)
+        existing_title = (conv.get("title") or "").strip() if conv else ""
+        if conv and (not existing_title or existing_title in {"New Conversation", "新会话"}):
+            title = " ".join(req.message.strip().split())
+            if title:
+                await upsert_conversation(req.conversation_id, owner_username=user["username"], title=title)
 
         # Build history (for SQL generation & analysis)
         history_rows = await get_messages(req.conversation_id, limit=20)

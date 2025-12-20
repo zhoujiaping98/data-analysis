@@ -327,7 +327,7 @@ async function refreshConversations() {
     chip.className = "chip" + (c.id === activeConversationId ? " active": "");
     const title = document.createElement("span");
     title.className = "chip-title";
-    title.textContent = (c.title || "Conversation").slice(0, 28);
+    title.textContent = truncateTitle(c.title || "新会话", 14);
     const del = document.createElement("button");
     del.className = "chip-del";
     del.type = "button";
@@ -357,6 +357,13 @@ async function refreshConversations() {
     chip.appendChild(del);
     wrap.appendChild(chip);
   });
+}
+
+function truncateTitle(text, maxLen) {
+  const t = (text || "").trim();
+  if (!t || t === "New Conversation") return "新会话";
+  if (t.length <= maxLen) return t;
+  return t.slice(0, maxLen) + "…";
 }
 
 async function newConversation() {
@@ -413,6 +420,7 @@ async function sendMessage() {
   if (!activeConversationId) await newConversation();
   el("chatInput").value = "";
   addChatMessage("user", text);
+  await refreshConversations();
 
   // Start SSE via fetch streaming
   const resp = await fetch(`${apiBase}/chat/sse`, {
@@ -473,7 +481,7 @@ async function sendMessage() {
       analysisStreaming = "";
       analysisMsgBodyEl = null;
     } else if (eventName === "done") {
-      // ignore
+      refreshConversations();
     }
   };
 
