@@ -260,8 +260,9 @@ async function runSql() {
     chart.clear();
     if (data.chart) {
       autoChartOption = data.chart;
-      lastChartOption = data.chart;
-      chart.setOption(data.chart);
+      const normalized = normalizeChartOption(data.chart);
+      lastChartOption = normalized;
+      chart.setOption(normalized);
       el("chartHint").textContent = "";
     } else {
       autoChartOption = null;
@@ -1740,18 +1741,46 @@ function renderChartFromConfig() {
   const rows = lastTableRows || [];
   const types = inferColumnTypes(columns, rows);
   if (chartConfig.type === "auto" && autoChartOption && (!chartConfig.filters || chartConfig.filters.length === 0)) {
-    chart.setOption(autoChartOption);
+    chart.setOption(normalizeChartOption(autoChartOption));
     el("chartHint").textContent = "";
     return;
   }
   const option = buildChartOption(columns, rows, types);
   if (option) {
-    chart.setOption(option);
-    lastChartOption = option;
+    const normalized = normalizeChartOption(option);
+    chart.setOption(normalized);
+    lastChartOption = normalized;
     el("chartHint").textContent = "";
   } else {
     el("chartHint").textContent = "当前配置不足以生成图表，请选择维度/指标或切换图表类型。";
   }
+}
+
+function normalizeChartOption(option) {
+  if (!option) return option;
+  const title = option.title;
+  let nextTitle = null;
+  if (Array.isArray(title)) {
+    nextTitle = title.map(t => ({ ...t, show: false }));
+  } else if (title) {
+    nextTitle = { ...title, show: false };
+  } else {
+    nextTitle = { show: false };
+  }
+  const next = { ...option, title: nextTitle };
+  if (Array.isArray(next.series)) {
+    next.series = next.series.map(s => {
+      if (s && s.type === "pie") {
+        return {
+          ...s,
+          radius: s.radius || ["25%", "55%"],
+          center: s.center || ["50%", "45%"],
+        };
+      }
+      return s;
+    });
+  }
+  return next;
 }
 
 function updateDropZones() {
@@ -1867,8 +1896,9 @@ async function sendMessage() {
       if (data.echarts_option) {
         autoChartOption = data.echarts_option;
         if (chartConfig.type === "auto") {
-          lastChartOption = data.echarts_option;
-          chart.setOption(data.echarts_option);
+          const normalized = normalizeChartOption(data.echarts_option);
+          lastChartOption = normalized;
+          chart.setOption(normalized);
           el("chartHint").textContent = "";
         } else {
           renderChartFromConfig();
@@ -2313,8 +2343,9 @@ function showArtifact(artifact) {
   if (artifact.analysis) lastAnalysisText = artifact.analysis;
   if (artifact.chart) {
     autoChartOption = artifact.chart;
-    lastChartOption = artifact.chart;
-    chart.setOption(artifact.chart);
+    const normalized = normalizeChartOption(artifact.chart);
+    lastChartOption = normalized;
+    chart.setOption(normalized);
     el("chartHint").textContent = "";
   } else {
     autoChartOption = null;
@@ -2341,7 +2372,14 @@ async function downloadXlsx(columns, rows, filename = "result.xlsx") {
 
 function downloadChart() {
   if (!chart) return;
+  const original = chart.getOption();
+  const title = original.title;
+  const hiddenTitle = Array.isArray(title)
+    ? title.map(t => ({ ...t, show: false }))
+    : (title ? { ...title, show: false } : { show: false });
+  chart.setOption({ title: hiddenTitle }, { notMerge: false, silent: true });
   const url = chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#ffffff" });
+  chart.setOption(original, { notMerge: true, silent: true });
   const a = document.createElement("a");
   a.href = url;
   a.download = "chart.png";
