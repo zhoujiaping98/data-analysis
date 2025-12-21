@@ -169,6 +169,7 @@ async def chat_sse(
                 columns_json=orjson.dumps(cols, default=_json_default).decode("utf-8"),
                 rows_json=orjson.dumps(rows, default=_json_default).decode("utf-8"),
                 chart_json=orjson.dumps(option, default=_json_default).decode("utf-8") if option else None,
+                analysis_text=analysis,
             )
         except Exception:
             pass

@@ -64,6 +64,7 @@ async def init_sqlite() -> None:
                 columns_json TEXT NOT NULL,
                 rows_json TEXT NOT NULL,
                 chart_json TEXT,
+                analysis_text TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -86,6 +87,9 @@ async def init_sqlite() -> None:
         if "datasource_id" not in cols:
             cur.execute("ALTER TABLE file_uploads ADD COLUMN datasource_id TEXT")
             cur.execute("UPDATE file_uploads SET datasource_id='default' WHERE datasource_id IS NULL")
+        artifact_cols = {r["name"] for r in cur.execute("PRAGMA table_info(message_artifacts)").fetchall()}
+        if "analysis_text" not in artifact_cols:
+            cur.execute("ALTER TABLE message_artifacts ADD COLUMN analysis_text TEXT")
         ds_cols = {r["name"] for r in cur.execute("PRAGMA table_info(data_sources)").fetchall()}
         if "training_ok" not in ds_cols:
             cur.execute("ALTER TABLE data_sources ADD COLUMN training_ok INTEGER")
@@ -271,12 +275,13 @@ async def add_message_artifact(
     columns_json: str,
     rows_json: str,
     chart_json: str | None,
+    analysis_text: str | None,
 ) -> None:
     async with _lock:
         conn = _connect()
         conn.execute(
-            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, created_at) "
-            "VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, analysis_text, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
             (
                 conv_id,
                 user_message_id,
@@ -284,6 +289,7 @@ async def add_message_artifact(
                 columns_json,
                 rows_json,
                 chart_json,
+                analysis_text,
                 datetime.utcnow().isoformat(),
             ),
         )

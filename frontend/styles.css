@@ -122,6 +122,12 @@ body::before {
   flex-direction: column;
   overflow: hidden;
 }
+.export-card {
+  width: min(460px, 92vw);
+}
+.export-body {
+  grid-template-columns: 1fr;
+}
 .modal-header {
   display: flex;
   align-items: center;
@@ -190,6 +196,25 @@ body::before {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+.export-grid {
+  grid-template-columns: 1fr 1fr;
+}
+.export-range {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.export-range .btn-mini {
+  min-width: 64px;
+}
+.export-range select,
+.export-range .btn-mini {
+  height: 34px;
+  line-height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .form-grid input, .form-grid select {
   background: rgba(255,255,255,.85);
@@ -459,6 +484,17 @@ textarea:focus {
 }
 
 .table-box { padding: 12px 14px; flex: 1; min-height: 0; }
+.table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.export-actions {
+  display: flex;
+  gap: 8px;
+}
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--border);
@@ -475,25 +511,15 @@ textarea:focus {
 
 /* Chart */
 .chart { flex: 1; min-height: 0; }
+.chart-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 .error { color: var(--danger); }
 
 /* Drawer */
-.drawer-toggle {
-  position: fixed;
-  right: 16px;
-  bottom: 18px;
-  z-index: 20;
-  padding: 10px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 180, 255, 0.45);
-  background: linear-gradient(135deg, rgba(0,180,255,.22), rgba(77,255,182,.18));
-  color: var(--text);
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: var(--shadow-soft);
-}
-
 .drawer-overlay {
   position: fixed;
   inset: 0;
@@ -524,11 +550,6 @@ textarea:focus {
 
 .drawer.open { transform: translateX(0); }
 .drawer-overlay.open { opacity: 1; pointer-events: auto; }
-body.drawer-open .drawer-toggle {
-  opacity: 0;
-  pointer-events: none;
-  transform: scale(0.98);
-}
 .drawer-actions { display: flex; gap: 8px; }
 
 .schema { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -610,6 +631,10 @@ body.drawer-open .drawer-toggle {
   color: var(--text);
   cursor: pointer;
   font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .btn-mini.danger {

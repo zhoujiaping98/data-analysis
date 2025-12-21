@@ -20,6 +20,7 @@
       <span class="muted">数据源</span>
       <select id="datasourceSelect"></select>
       <button id="btnManageDs" class="ghost">管理</button>
+      <button id="btnDrawer" class="ghost">数据</button>
     </div>
     <div class="auth">
       <input id="username" placeholder="username" value="guest" />
@@ -63,7 +64,13 @@
       </div>
 
       <div class="table-box">
-        <div class="subhead">查询结果</div>
+        <div class="table-header">
+          <div class="subhead">查询结果</div>
+          <div class="export-actions">
+            <button id="btnExportOptions" class="ghost">导出数据</button>
+            <button id="btnExportReport" class="ghost">导出报告</button>
+          </div>
+        </div>
         <div id="tableWrap" class="table-wrap"></div>
       </div>
     </section>
@@ -72,12 +79,14 @@
       <div class="panel-header">
         <div class="title">图形化</div>
       </div>
+      <div class="chart-actions pad">
+        <button id="btnExportChart" class="ghost">导出图表</button>
+      </div>
       <div id="chart" class="chart"></div>
       <div id="chartHint" class="muted pad"></div>
     </section>
   </div>
 
-  <button id="btnDrawer" class="drawer-toggle" type="button">数据</button>
   <div id="drawerOverlay" class="drawer-overlay"></div>
   <aside id="drawer" class="drawer">
     <div class="panel-header">
@@ -149,6 +158,30 @@
     </div>
   </div>
 
-  <script src="/app.js?v=14"></script>
+  <div id="exportModal" class="modal">
+    <div class="modal-card export-card">
+      <div class="modal-header">
+        <div class="title">导出设置</div>
+        <button id="btnCloseExport" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body export-body">
+        <div class="form-grid export-grid">
+          <input id="exportFilename" placeholder="文件名（不含扩展名）" />
+          <div class="export-range">
+            <select id="exportRange">
+            <option value="all">全部结果</option>
+            <option value="50">前 50 行</option>
+            <option value="200">前 200 行</option>
+            <option value="500">前 500 行</option>
+            </select>
+            <button id="btnExportXlsxModal" class="btn-mini">导出</button>
+          </div>
+          <div id="exportHint" class="muted"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=26"></script>
 </body>
 </html>

@@ -7,7 +7,14 @@ let activeDsInModal = "";
 let chart = null;
 let analysisStreaming = "";
 let analysisMsgBodyEl = null;
+let lastAnalysisText = "";
+let lastUserQuestion = "";
+let reportContext = { question: "", analysis: "" };
 const messageArtifacts = new Map();
+
+let lastTableColumns = [];
+let lastTableRows = [];
+
 
 const el = (id) => document.getElementById(id);
 
@@ -85,6 +92,49 @@ async function refreshDatasources() {
   } catch (e) {
     // ignore
   }
+}
+
+
+function openExportModal() {
+  const modal = el("exportModal");
+  if (!modal) return;
+  modal.classList.add("open");
+  updateExportHint();
+}
+
+function closeExportModal() {
+  const modal = el("exportModal");
+  if (!modal) return;
+  modal.classList.remove("open");
+}
+
+function updateExportHint() {
+  const hint = el("exportHint");
+  if (!hint) return;
+  const total = lastTableRows.length;
+  if (total === 0) {
+    hint.textContent = "当前无结果可导出";
+    return;
+  }
+  if (total > 5000) {
+    hint.textContent = `当前结果 ${total} 行，建议导出前 500 行（避免浏览器卡顿）`;
+  } else if (total > 1000) {
+    hint.textContent = `当前结果 ${total} 行，导出可能耗时，请耐心等待`;
+  } else {
+    hint.textContent = `当前结果 ${total} 行`;
+  }
+}
+
+function getExportRows(rangeValue) {
+  if (rangeValue === "all") return lastTableRows;
+  const limit = Number(rangeValue || 0);
+  if (!limit) return lastTableRows;
+  return lastTableRows.slice(0, limit);
+}
+
+function getExportFilename(ext) {
+  const base = (el("exportFilename")?.value || "result").trim() || "result";
+  return base.replace(/[^A-Za-z0-9_一-龥-]+/g, "_") + ext;
 }
 
 function openDsModal() {
@@ -216,24 +266,6 @@ async function setDefaultDatasource() {
   }
 }
 
-async function trainDatasource() {
-  if (!currentDatasourceId) return;
-  try {
-    const resp = await apiFetch(`/datasources/${encodeURIComponent(currentDatasourceId)}/train`, {
-      method: "POST"
-    });
-    const data = await resp.json();
-    if (!data.ok) {
-      setAuthStatus(`训练失败：${data.error || "unknown"}`, true);
-    } else {
-      setAuthStatus("训练完成");
-    }
-    await refreshDatasources();
-    await refreshSchemaTables();
-  } catch (e) {
-    setAuthStatus("训练失败", true);
-  }
-}
 
 function renderTableInto(wrapEl, columns, rows) {
   if (!wrapEl) return;
@@ -609,29 +641,47 @@ async function loadConversation(convId) {
   el("chartHint").textContent = "";
   analysisStreaming = "";
   analysisMsgBodyEl = null;
+  lastAnalysisText = "";
+  lastUserQuestion = "";
   messageArtifacts.clear();
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
 
   const resp = await apiFetch(`/conversations/${convId}/messages`);
   const msgs = await resp.json();
+  let latestUser = null;
   msgs.forEach(m => {
     if (m.role === "user" && m.artifact) {
       messageArtifacts.set(m.id, m.artifact);
-      addChatMessage(m.role, m.content, { artifact: m.artifact });
+      addChatMessage(m.role, m.content, { artifact: { ...m.artifact, question: m.content } });
+      latestUser = m;
     } else {
       addChatMessage(m.role, m.content);
+      if (m.role === "user") latestUser = m;
     }
   });
+  if (latestUser) {
+    lastUserQuestion = latestUser.content || "";
+    if (latestUser.artifact && latestUser.artifact.analysis) {
+      lastAnalysisText = latestUser.artifact.analysis;
+      reportContext.question = latestUser.content || "";
+      reportContext.analysis = latestUser.artifact.analysis;
+    }
+  }
 }
 
 function renderTable(columns, rows) {
+  lastTableColumns = columns || [];
+  lastTableRows = rows || [];
+  updateExportHint();
   renderTableInto(el("tableWrap"), columns, rows);
 }
 
 async function sendMessage() {
   const text = el("chatInput").value.trim();
   if (!text) return;
+  lastUserQuestion = text;
+  reportContext.question = text;
   if (!activeConversationId) await newConversation();
   el("chatInput").value = "";
   addChatMessage("user", text);
@@ -687,8 +737,12 @@ async function sendMessage() {
           analysisMsgBodyEl.textContent = text;
           analysisMsgBodyEl = null;
           analysisStreaming = "";
+          lastAnalysisText = text;
+          reportContext.analysis = text;
         } else if (text) {
           addChatMessage("assistant", text);
+          lastAnalysisText = text;
+          reportContext.analysis = text;
         }
       }
     } else if (eventName === "error") {
@@ -745,6 +799,15 @@ if (el("btnDsCreate")) el("btnDsCreate").onclick = createDatasource;
 if (el("btnDsTest")) el("btnDsTest").onclick = testDatasource;
 if (el("btnDsTrain")) el("btnDsTrain").onclick = trainDatasourceSelected;
 if (el("btnDsDefault")) el("btnDsDefault").onclick = setDefaultDatasource;
+if (el("btnExportOptions")) el("btnExportOptions").onclick = openExportModal;
+if (el("btnCloseExport")) el("btnCloseExport").onclick = closeExportModal;
+if (el("exportModal")) el("exportModal").addEventListener("click", (e) => {
+  if (e.target.id === "exportModal") closeExportModal();
+});
+if (el("exportRange")) el("exportRange").onchange = updateExportHint;
+if (el("btnExportXlsxModal")) el("btnExportXlsxModal").onclick = () => downloadXlsx(lastTableColumns, getExportRows(el("exportRange").value), getExportFilename(".xlsx"));
+if (el("btnExportChart")) el("btnExportChart").onclick = downloadChart;
+if (el("btnExportReport")) el("btnExportReport").onclick = exportHtmlReport;
 if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
 if (el("btnDrawer")) el("btnDrawer").onclick = () => toggleDrawer(true);
 if (el("btnCloseDrawer")) el("btnCloseDrawer").onclick = () => toggleDrawer(false);
@@ -805,10 +868,89 @@ function showArtifact(artifact) {
   renderTable(artifact.columns || [], artifact.rows || []);
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
+  reportContext.question = artifact.question || lastUserQuestion || "";
+  reportContext.analysis = artifact.analysis || "";
+  if (artifact.question) lastUserQuestion = artifact.question;
+  if (artifact.analysis) lastAnalysisText = artifact.analysis;
   if (artifact.chart) {
     chart.setOption(artifact.chart);
     el("chartHint").textContent = "";
   } else {
     el("chartHint").textContent = "该问题未生成图表";
   }
+}
+
+async function downloadXlsx(columns, rows, filename = "result.xlsx") {
+  if (rows.length > 5000 && !confirm("结果行数较多，导出可能较慢，是否继续？")) return;
+  const resp = await apiFetch("/export/xlsx", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ columns, rows, filename })
+  });
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadChart() {
+  if (!chart) return;
+  const url = chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#ffffff" });
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "chart.png";
+  a.click();
+}
+
+function exportHtmlReport() {
+  const sql = el("sqlBox").textContent || "";
+  const question = (reportContext.question || "").trim() ||
+    (el("chatInput")?.value || "").trim() ||
+    lastUserQuestion ||
+    "（当前问题已发送）";
+  const chartUrl = chart ? chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#ffffff" }) : "";
+  const filename = `report_${new Date().toISOString().slice(0,10)}.html`;
+  const rows = lastTableRows || [];
+  const cols = lastTableColumns || [];
+
+  const escape = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const tableHead = cols.map(c => `<th>${escape(c)}</th>`).join("");
+  const tableBody = rows.map(r => `<tr>${r.map(v => `<td>${escape(v)}</td>`).join("")}</tr>`).join("");
+
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>分析报告</title>
+<style>
+body{font-family:Arial,"Noto Sans SC",sans-serif;padding:24px;color:#111;}
+.h1{font-size:20px;font-weight:700;margin-bottom:12px;}
+.section{margin:18px 0;}
+.code{white-space:pre-wrap;background:#0b1220;color:#fff;padding:12px;border-radius:8px;}
+img{max-width:100%;border:1px solid #eee;border-radius:8px;}
+table{border-collapse:collapse;width:100%;font-size:12px;}
+th,td{border:1px solid #eee;padding:6px;}
+th{background:#f6f7fb;text-align:left;}
+</style>
+</head>
+<body>
+<div class="h1">分析报告</div>
+<div class="section">生成时间：${new Date().toLocaleString()}</div>
+<div class="section"><b>用户提问</b><div>${escape(question)}</div></div>
+<div class="section"><b>SQL</b><div class="code">${escape(sql)}</div></div>
+${chartUrl ? `<div class="section"><b>图表</b><br/><img src="${chartUrl}"/></div>` : ''}
+<div class="section"><b>结果表</b><table><thead><tr>${tableHead}</tr></thead><tbody>${tableBody}</tbody></table></div>
+${(reportContext.analysis || lastAnalysisText) ? `<div class="section"><b>分析结论</b><div>${escape(reportContext.analysis || lastAnalysisText)}</div></div>` : ''}
+</body>
+</html>`;
+const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
