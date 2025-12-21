@@ -58,8 +58,11 @@
         <div id="statusLine" class="muted"></div>
       </div>
 
-      <div class="sql-box">
-        <div class="subhead">生成的 SQL</div>
+      <div class="sql-box collapsed">
+        <div class="sql-header">
+          <div class="subhead">生成的 SQL</div>
+          <button id="btnToggleSql" class="ghost">展开</button>
+        </div>
         <pre id="sqlBox" class="code"></pre>
       </div>
 
@@ -69,6 +72,7 @@
           <div class="export-actions">
             <button id="btnExportOptions" class="ghost">导出数据</button>
             <button id="btnExportReport" class="ghost">导出报告</button>
+            <button id="btnTableFullscreen" class="ghost">放大</button>
           </div>
         </div>
         <div id="tableWrap" class="table-wrap"></div>
@@ -182,6 +186,31 @@
     </div>
   </div>
 
-  <script src="/app.js?v=26"></script>
+  <div id="tableModal" class="modal">
+    <div class="modal-card table-card">
+      <div class="modal-header">
+        <div class="title">结果表</div>
+        <button id="btnCloseTable" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body table-body">
+        <div class="table-tools">
+          <input id="tableSearch" placeholder="搜索表格内容" />
+          <select id="tablePageSize">
+            <option value="20">每页 20</option>
+            <option value="50" selected>每页 50</option>
+            <option value="100">每页 100</option>
+          </select>
+          <div class="pager">
+            <button id="btnTablePrev" class="ghost">上一页</button>
+            <span id="tablePageInfo" class="muted">1 / 1</span>
+            <button id="btnTableNext" class="ghost">下一页</button>
+          </div>
+        </div>
+        <div id="tableModalWrap" class="table-wrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=29"></script>
 </body>
 </html>

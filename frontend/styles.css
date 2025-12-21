@@ -128,6 +128,51 @@ body::before {
 .export-body {
   grid-template-columns: 1fr;
 }
+.table-card {
+  width: min(1100px, 96vw);
+  max-height: 90vh;
+}
+.table-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: hidden;
+}
+.table-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.table-tools input,
+.table-tools select {
+  background: rgba(255,255,255,.85);
+  border: 1px solid rgba(11, 16, 32, 0.18);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.table-tools input {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+.table-tools .pager {
+  margin-left: auto;
+}
+.table-body .table-wrap {
+  flex: 1;
+  min-height: 0;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pager .ghost {
+  padding: 6px 10px;
+}
 .modal-header {
   display: flex;
   align-items: center;
@@ -142,6 +187,13 @@ body::before {
   gap: 16px;
   padding: 16px;
   overflow: auto;
+}
+.modal-body.table-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: hidden;
 }
 .modal-left, .modal-right {
   min-width: 0;
@@ -469,6 +521,20 @@ textarea:focus {
 
 /* SQL + table */
 .sql-box { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.sql-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sql-box.collapsed .code {
+  display: none;
+}
+.sql-box.collapsed {
+  padding-bottom: 6px;
+}
+
 .subhead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 .code {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

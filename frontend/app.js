@@ -10,6 +10,7 @@ let analysisMsgBodyEl = null;
 let lastAnalysisText = "";
 let lastUserQuestion = "";
 let reportContext = { question: "", analysis: "" };
+let tableModalState = { query: "", page: 1, pageSize: 50 };
 const messageArtifacts = new Map();
 
 let lastTableColumns = [];
@@ -675,6 +676,30 @@ function renderTable(columns, rows) {
   lastTableRows = rows || [];
   updateExportHint();
   renderTableInto(el("tableWrap"), columns, rows);
+  renderTableModal();
+}
+
+function renderTableModal() {
+  const wrap = el("tableModalWrap");
+  const info = el("tablePageInfo");
+  if (!wrap || !info) return;
+  const query = (tableModalState.query || "").toLowerCase();
+  const pageSize = tableModalState.pageSize || 50;
+  const rows = (lastTableRows || []).filter(r => {
+    if (!query) return true;
+    return r.some(v => String(v ?? "").toLowerCase().includes(query));
+  });
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (tableModalState.page > totalPages) tableModalState.page = totalPages;
+  if (tableModalState.page < 1) tableModalState.page = 1;
+  const start = (tableModalState.page - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+  renderTableInto(wrap, lastTableColumns || [], pageRows);
+  info.textContent = `${tableModalState.page} / ${totalPages}`;
+  const prev = el("btnTablePrev");
+  const next = el("btnTableNext");
+  if (prev) prev.disabled = tableModalState.page <= 1;
+  if (next) next.disabled = tableModalState.page >= totalPages;
 }
 
 async function sendMessage() {
@@ -806,6 +831,37 @@ if (el("exportModal")) el("exportModal").addEventListener("click", (e) => {
 });
 if (el("exportRange")) el("exportRange").onchange = updateExportHint;
 if (el("btnExportXlsxModal")) el("btnExportXlsxModal").onclick = () => downloadXlsx(lastTableColumns, getExportRows(el("exportRange").value), getExportFilename(".xlsx"));
+if (el("btnTableFullscreen")) el("btnTableFullscreen").onclick = () => {
+  const modal = el("tableModal");
+  tableModalState.page = 1;
+  if (modal) modal.classList.add("open");
+  renderTableModal();
+};
+if (el("btnCloseTable")) el("btnCloseTable").onclick = () => {
+  const modal = el("tableModal");
+  if (modal) modal.classList.remove("open");
+};
+if (el("tableModal")) el("tableModal").addEventListener("click", (e) => {
+  if (e.target.id === "tableModal") e.currentTarget.classList.remove("open");
+});
+if (el("tableSearch")) el("tableSearch").addEventListener("input", (e) => {
+  tableModalState.query = e.target.value || "";
+  tableModalState.page = 1;
+  renderTableModal();
+});
+if (el("tablePageSize")) el("tablePageSize").onchange = (e) => {
+  tableModalState.pageSize = Number(e.target.value || 50);
+  tableModalState.page = 1;
+  renderTableModal();
+};
+if (el("btnTablePrev")) el("btnTablePrev").onclick = () => {
+  tableModalState.page -= 1;
+  renderTableModal();
+};
+if (el("btnTableNext")) el("btnTableNext").onclick = () => {
+  tableModalState.page += 1;
+  renderTableModal();
+};
 if (el("btnExportChart")) el("btnExportChart").onclick = downloadChart;
 if (el("btnExportReport")) el("btnExportReport").onclick = exportHtmlReport;
 if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
@@ -860,6 +916,14 @@ function toggleDrawer(open) {
     document.body.classList.remove("drawer-open");
   }
 }
+
+if (el("btnToggleSql")) el("btnToggleSql").onclick = () => {
+  const box = document.querySelector(".sql-box");
+  if (!box) return;
+  box.classList.toggle("collapsed");
+  const btn = el("btnToggleSql");
+  if (btn) btn.textContent = box.classList.contains("collapsed") ? "展开" : "收起";
+};
 
 function showArtifact(artifact) {
   if (!artifact) return;
