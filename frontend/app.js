@@ -34,6 +34,12 @@ let tableViewState = {
 let tableFilterSeq = 1;
 let tableViewDirty = false;
 let filterInputTimer = null;
+let previewState = {
+  table: "",
+  page: 1,
+  pageSize: 50,
+  total: 0
+};
 let chartConfig = {
   type: "auto",
   xField: "",
@@ -503,6 +509,8 @@ async function refreshSchemaTables() {
   if (!token) {
     listEl.innerHTML = "<div class='pad muted'>登录后可查看表列表</div>";
     previewEl.innerHTML = "<div class='pad muted'>请选择一个表进行预览</div>";
+    previewState = { table: "", page: 1, pageSize: previewState.pageSize || 50, total: 0 };
+    updatePreviewPager();
     if (el("schemaChangeMeta")) el("schemaChangeMeta").textContent = "最近检查：-";
     if (el("schemaChangeList")) el("schemaChangeList").innerHTML = "";
     if (el("btnSchemaMore")) el("btnSchemaMore").style.display = "none";
@@ -545,11 +553,15 @@ async function refreshSchemaTables() {
       listEl.appendChild(item);
     });
     previewEl.innerHTML = "<div class='pad muted'>请选择一个表进行预览</div>";
+    previewState = { table: "", page: 1, pageSize: previewState.pageSize || 50, total: 0 };
+    updatePreviewPager();
     await refreshSchemaChanges();
     if (el("btnSchemaMore")) el("btnSchemaMore").style.display = "";
   } catch (e) {
     listEl.innerHTML = "<div class='pad error'>加载表列表失败</div>";
     previewEl.innerHTML = "<div class='pad muted'>请检查后端日志</div>";
+    previewState = { table: "", page: 1, pageSize: previewState.pageSize || 50, total: 0 };
+    updatePreviewPager();
     if (el("schemaChangeMeta")) el("schemaChangeMeta").textContent = "最近检查：-";
     if (el("schemaChangeList")) el("schemaChangeList").innerHTML = "";
     if (el("btnSchemaMore")) el("btnSchemaMore").style.display = "none";
@@ -613,9 +625,12 @@ async function previewTable(tableName) {
   if (!previewEl) return;
   previewEl.innerHTML = "<div class='pad muted'>加载预览...</div>";
   try {
-    const resp = await apiFetch(`/schema/tables/${encodeURIComponent(tableName)}/preview?limit=10`);
+    previewState.table = tableName;
+    const resp = await apiFetch(`/schema/tables/${encodeURIComponent(tableName)}/preview?page=${previewState.page}&page_size=${previewState.pageSize}`);
     const data = await resp.json();
     renderTableInto(previewEl, data.columns, data.rows);
+    previewState.total = data.total || 0;
+    updatePreviewPager();
   } catch (e) {
     let msg = e?.message || String(e);
     try {
@@ -624,6 +639,17 @@ async function previewTable(tableName) {
     } catch (_) {}
     previewEl.innerHTML = `<div class='pad error'>预览失败：${msg}</div>`;
   }
+}
+
+function updatePreviewPager() {
+  const info = el("previewPageInfo");
+  const prev = el("btnPreviewPrev");
+  const next = el("btnPreviewNext");
+  if (!info || !prev || !next) return;
+  const totalPages = Math.max(1, Math.ceil((previewState.total || 0) / previewState.pageSize));
+  info.textContent = `${previewState.page} / ${totalPages}`;
+  prev.disabled = previewState.page <= 1;
+  next.disabled = previewState.page >= totalPages;
 }
 
 async function refreshUploads() {
@@ -2187,6 +2213,21 @@ if (el("btnRefreshSchema")) el("btnRefreshSchema").onclick = async () => {
 if (el("btnSchemaMore")) el("btnSchemaMore").onclick = async () => {
   schemaChangeExpanded = !schemaChangeExpanded;
   await refreshSchemaChanges();
+};
+if (el("btnPreviewPrev")) el("btnPreviewPrev").onclick = () => {
+  if (!previewState.table) return;
+  previewState.page = Math.max(1, previewState.page - 1);
+  previewTable(previewState.table);
+};
+if (el("btnPreviewNext")) el("btnPreviewNext").onclick = () => {
+  if (!previewState.table) return;
+  previewState.page += 1;
+  previewTable(previewState.table);
+};
+if (el("previewPageSize")) el("previewPageSize").onchange = (e) => {
+  previewState.pageSize = Number(e.target.value || 50);
+  previewState.page = 1;
+  if (previewState.table) previewTable(previewState.table);
 };
 
 el("chatInput").addEventListener("keydown", (e) => {

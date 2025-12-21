@@ -5,7 +5,7 @@ import orjson
 
 from fastapi import Header
 from backend.app.api.deps import get_current_user
-from backend.app.core.mysql import list_tables, preview_table
+from backend.app.core.mysql import list_tables, preview_table, preview_table_page
 from backend.app.core.sqlite_store import list_file_uploads, list_schema_change_logs, get_schema_snapshot
 from backend.app.core.resilience import CircuitOpenError
 from backend.app.core.uploads import cleanup_expired_uploads
@@ -49,12 +49,33 @@ async def schema_tables(
 async def schema_table_preview(
     table_name: str,
     limit: int = Query(default=10, ge=1, le=100),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=200),
     user=Depends(get_current_user),
     x_datasource_id: str | None = Header(default=None),
 ):
     try:
         await cleanup_expired_uploads()
         ds_id, ds_cfg = await resolve_datasource(x_datasource_id)
+        if page is not None or page_size is not None:
+            page = page or 1
+            page_size = page_size or 50
+            cols, rows, total = await preview_table_page(
+                table_name,
+                page=page,
+                page_size=page_size,
+                config=ds_cfg,
+                cache_key=ds_id,
+            )
+            return {
+                "table": table_name,
+                "columns": cols,
+                "rows": rows,
+                "row_count": len(rows),
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
         cols, rows = await preview_table(table_name, limit=limit, config=ds_cfg, cache_key=ds_id)
         return {"table": table_name, "columns": cols, "rows": rows, "row_count": len(rows)}
     except CircuitOpenError as e:

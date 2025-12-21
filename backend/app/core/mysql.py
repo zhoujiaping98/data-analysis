@@ -341,6 +341,40 @@ async def preview_table(
     return cols, [list(r) for r in rows]
 
 
+async def preview_table_page(
+    table_name: str,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> Tuple[List[str], List[List[Any]], int]:
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 1
+    if page_size > 200:
+        page_size = 200
+
+    tables = await list_tables(config, cache_key)
+    allowed = {t["name"] for t in tables}
+    if table_name not in allowed:
+        raise ValueError("Table not found")
+
+    count_sql = f"SELECT COUNT(*) AS cnt FROM {_quote_ident(table_name)}"
+    async def _op_count():
+        return await _with_timeout(_execute_fetchall(count_sql, None, config, cache_key))
+    _, count_rows = await _with_mysql_retry(_op_count)
+    total = int(count_rows[0].cnt) if count_rows else 0
+
+    offset = (page - 1) * page_size
+    data_sql = f"SELECT * FROM {_quote_ident(table_name)} LIMIT :limit OFFSET :offset"
+    async def _op_data():
+        return await _with_timeout(_execute_fetchmany(data_sql, {"limit": page_size, "offset": offset}, page_size, config, cache_key))
+    cols, rows = await _with_mysql_retry(_op_data)
+    return cols, [list(r) for r in rows], total
+
+
 def import_dataframe(
     table_name: str,
     df,

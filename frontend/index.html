@@ -95,7 +95,7 @@
           <div class="export-actions">
             <button id="btnExportOptions" class="ghost">导出数据</button>
             <button id="btnExportReport" class="ghost">导出报告</button>
-            <button id="btnTableFullscreen" class="ghost">放大</button>
+            <button id="btnTableFullscreen" class="ghost">详情</button>
           </div>
         </div>
         <div id="tableWrap" class="table-wrap"></div>
@@ -145,8 +145,18 @@
           <div class="pad">
             <button id="btnSchemaMore" class="ghost">展开更多</button>
           </div>
-          <div class="subhead pad">预览（前 10 行）</div>
+          <div class="subhead pad">预览</div>
           <div id="previewWrap" class="table-wrap"></div>
+          <div class="pager pad">
+            <button id="btnPreviewPrev" class="ghost">上一页</button>
+            <span id="previewPageInfo" class="muted">1 / 1</span>
+            <button id="btnPreviewNext" class="ghost">下一页</button>
+            <select id="previewPageSize" class="select-mini">
+              <option value="20">20</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>
@@ -405,6 +415,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=43"></script>
+  <script src="/app.js?v=44"></script>
 </body>
 </html>
