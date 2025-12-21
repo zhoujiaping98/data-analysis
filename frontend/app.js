@@ -16,6 +16,17 @@ const messageIdToQuestion = new Map();
 let activeMessageId = 0;
 let lastUserMsgEl = null;
 let lastChartOption = null;
+let autoChartOption = null;
+let chartConfig = {
+  type: "auto",
+  xField: "",
+  yField: "",
+  seriesField: "",
+  agg: "sum",
+  fieldRoles: {},
+  filters: []
+};
+let filterSeq = 1;
 
 let lastTableColumns = [];
 let lastTableRows = [];
@@ -159,10 +170,12 @@ async function runSql() {
     if (!chart) chart = echarts.init(el("chart"));
     chart.clear();
     if (data.chart) {
+      autoChartOption = data.chart;
       lastChartOption = data.chart;
       chart.setOption(data.chart);
       el("chartHint").textContent = "";
     } else {
+      autoChartOption = null;
       lastChartOption = null;
       el("chartHint").textContent = "该问题未生成图表";
     }
@@ -748,6 +761,16 @@ async function loadConversation(convId) {
   activeMessageId = 0;
   lastUserMsgEl = null;
   lastChartOption = null;
+  autoChartOption = null;
+  chartConfig = {
+    type: "auto",
+    xField: "",
+    yField: "",
+    seriesField: "",
+    agg: "sum",
+    fieldRoles: {},
+    filters: []
+  };
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
 
@@ -783,7 +806,393 @@ function renderTable(columns, rows) {
   lastTableRows = rows || [];
   updateExportHint();
   renderTableInto(el("tableWrap"), columns, rows);
+  updateChartSchema();
+  renderChartFromConfig();
   renderTableModal();
+}
+
+function inferColumnTypes(columns, rows) {
+  const types = {};
+  columns.forEach((c, idx) => {
+    let numeric = 0;
+    let dateLike = 0;
+    let total = 0;
+    rows.forEach(r => {
+      const v = r[idx];
+      if (v === null || v === undefined || v === "") return;
+      total += 1;
+      const n = Number(v);
+      if (!Number.isNaN(n) && isFinite(n)) numeric += 1;
+      if (typeof v === "string") {
+        const d = Date.parse(v);
+        if (!Number.isNaN(d)) dateLike += 1;
+      } else if (v instanceof Date) {
+        dateLike += 1;
+      }
+    });
+    if (numeric && numeric >= Math.max(1, total * 0.8)) types[c] = "number";
+    else if (dateLike && dateLike >= Math.max(1, total * 0.6)) types[c] = "date";
+    else types[c] = "string";
+  });
+  return types;
+}
+
+function syncChartConfigWithColumns(columns, types) {
+  const colSet = new Set(columns);
+  if (!colSet.has(chartConfig.xField)) chartConfig.xField = "";
+  if (!colSet.has(chartConfig.yField)) chartConfig.yField = "";
+  if (!colSet.has(chartConfig.seriesField)) chartConfig.seriesField = "";
+  chartConfig.filters = (chartConfig.filters || []).filter(f => colSet.has(f.field));
+  columns.forEach(c => {
+    if (!chartConfig.fieldRoles[c]) {
+      chartConfig.fieldRoles[c] = types[c] === "number" ? "metric" : "dimension";
+    }
+  });
+}
+
+function updateChartSchema() {
+  const columns = lastTableColumns || [];
+  const rows = lastTableRows || [];
+  const types = inferColumnTypes(columns, rows);
+  syncChartConfigWithColumns(columns, types);
+  if (!chartConfig.xField) {
+    chartConfig.xField = columns.find(c => types[c] !== "number") || columns[0] || "";
+  }
+  if (!chartConfig.yField) {
+    chartConfig.yField = columns.find(c => types[c] === "number") || "";
+  }
+  renderChartBuilder(columns, types);
+}
+
+function renderChartBuilder(columns, types) {
+  renderFieldList(columns, types);
+  renderRoleList(columns, types);
+  renderFilterList(columns, types);
+  updateBuilderSelects(columns);
+  updateDropZones();
+}
+
+function updateBuilderSelects(columns) {
+  const xSel = el("chartXField");
+  const ySel = el("chartYField");
+  const sSel = el("chartSeriesField");
+  if (!xSel || !ySel || !sSel) return;
+  xSel.innerHTML = "";
+  ySel.innerHTML = "";
+  sSel.innerHTML = "";
+  const xFields = columns.filter(c => chartConfig.fieldRoles[c] !== "metric");
+  const yFields = columns.filter(c => chartConfig.fieldRoles[c] !== "dimension");
+  const optNone = document.createElement("option");
+  optNone.value = "";
+  optNone.textContent = "不选择";
+  xSel.appendChild(optNone.cloneNode(true));
+  ySel.appendChild(optNone.cloneNode(true));
+  sSel.appendChild(optNone.cloneNode(true));
+  xFields.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (c === chartConfig.xField) opt.selected = true;
+    xSel.appendChild(opt);
+  });
+  yFields.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (c === chartConfig.yField) opt.selected = true;
+    ySel.appendChild(opt);
+  });
+  columns.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (c === chartConfig.seriesField) opt.selected = true;
+    sSel.appendChild(opt);
+  });
+  const typeSel = el("chartType");
+  if (typeSel) typeSel.value = chartConfig.type || "auto";
+  const aggSel = el("chartAgg");
+  if (aggSel) aggSel.value = chartConfig.agg || "sum";
+}
+
+function renderFieldList(columns, types) {
+  const list = el("fieldList");
+  if (!list) return;
+  list.innerHTML = "";
+  columns.forEach(c => {
+    const chip = document.createElement("div");
+    chip.className = "field-chip";
+    chip.textContent = c;
+    chip.draggable = true;
+    chip.dataset.field = c;
+    chip.title = types[c] === "number" ? "数值" : (types[c] === "date" ? "时间" : "文本");
+    chip.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", c);
+    });
+    list.appendChild(chip);
+  });
+}
+
+function renderRoleList(columns, types) {
+  const list = el("roleList");
+  if (!list) return;
+  list.innerHTML = "";
+  columns.forEach(c => {
+    const row = document.createElement("div");
+    row.className = "role-row";
+    const name = document.createElement("div");
+    name.textContent = c;
+    const sel = document.createElement("select");
+    const opts = [
+      { value: "dimension", label: "维度" },
+      { value: "metric", label: "指标" },
+      { value: "auto", label: "自动" },
+    ];
+    opts.forEach(o => {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+    const defaultRole = chartConfig.fieldRoles[c] || (types[c] === "number" ? "metric" : "dimension");
+    sel.value = defaultRole;
+    sel.onchange = () => {
+      chartConfig.fieldRoles[c] = sel.value;
+      updateBuilderSelects(columns);
+      renderChartFromConfig();
+    };
+    row.appendChild(name);
+    row.appendChild(sel);
+    list.appendChild(row);
+  });
+}
+
+function renderFilterList(columns, types) {
+  const list = el("filterList");
+  if (!list) return;
+  list.innerHTML = "";
+  (chartConfig.filters || []).forEach(f => {
+    const row = document.createElement("div");
+    row.className = "filter-row";
+    const colSel = document.createElement("select");
+    columns.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      if (c === f.field) opt.selected = true;
+      colSel.appendChild(opt);
+    });
+    const opSel = document.createElement("select");
+    const isNum = types[f.field] === "number";
+    const ops = isNum
+      ? ["=", ">", "<", ">=", "<=", "between"]
+      : ["contains", "=", "!="];
+    ops.forEach(op => {
+      const opt = document.createElement("option");
+      opt.value = op;
+      opt.textContent = op === "between" ? "区间" : op;
+      if (op === f.op) opt.selected = true;
+      opSel.appendChild(opt);
+    });
+    const val = document.createElement("input");
+    val.placeholder = f.op === "between" ? "最小值,最大值" : "筛选值";
+    val.value = f.value || "";
+    const del = document.createElement("button");
+    del.className = "ghost";
+    del.type = "button";
+    del.textContent = "删除";
+    del.onclick = () => {
+      chartConfig.filters = chartConfig.filters.filter(x => x.id !== f.id);
+      renderFilterList(columns, types);
+      renderChartFromConfig();
+    };
+    colSel.onchange = () => {
+      f.field = colSel.value;
+      f.op = types[f.field] === "number" ? "=" : "contains";
+      renderFilterList(columns, types);
+      renderChartFromConfig();
+    };
+    opSel.onchange = () => {
+      f.op = opSel.value;
+      renderFilterList(columns, types);
+      renderChartFromConfig();
+    };
+    val.oninput = () => {
+      f.value = val.value;
+      renderChartFromConfig();
+    };
+    row.appendChild(colSel);
+    row.appendChild(opSel);
+    row.appendChild(val);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function applyFilters(columns, rows, types) {
+  if (!chartConfig.filters || chartConfig.filters.length === 0) return rows;
+  const colIndex = {};
+  columns.forEach((c, idx) => colIndex[c] = idx);
+  return rows.filter(r => {
+    return chartConfig.filters.every(f => {
+      const idx = colIndex[f.field];
+      if (idx === undefined) return true;
+      const v = r[idx];
+      if (f.op === "contains") return String(v ?? "").includes(f.value || "");
+      if (f.op === "=") return String(v ?? "") === String(f.value ?? "");
+      if (f.op === "!=") return String(v ?? "") !== String(f.value ?? "");
+      const n = Number(v);
+      const target = Number(f.value);
+      if (Number.isNaN(n)) return false;
+      if (f.op === ">") return n > target;
+      if (f.op === "<") return n < target;
+      if (f.op === ">=") return n >= target;
+      if (f.op === "<=") return n <= target;
+      if (f.op === "between") {
+        const parts = String(f.value || "").split(",");
+        const min = Number(parts[0]);
+        const max = Number(parts[1]);
+        if (Number.isNaN(min) || Number.isNaN(max)) return true;
+        return n >= min && n <= max;
+      }
+      return true;
+    });
+  });
+}
+
+function buildChartOption(columns, rows, types) {
+  const xField = chartConfig.xField;
+  const yField = chartConfig.yField;
+  const seriesField = chartConfig.seriesField;
+  const chartType = chartConfig.type;
+  const agg = chartConfig.agg || "sum";
+  const colIndex = {};
+  columns.forEach((c, idx) => colIndex[c] = idx);
+  const filtered = applyFilters(columns, rows, types);
+
+  if (!xField && !yField) return null;
+
+  const xIdx = xField ? colIndex[xField] : -1;
+  const yIdx = yField ? colIndex[yField] : -1;
+  const sIdx = seriesField ? colIndex[seriesField] : -1;
+
+  const aggFn = (values) => {
+    const nums = values.map(v => Number(v)).filter(v => !Number.isNaN(v));
+    if (agg === "count" || !yField) return values.length;
+    if (nums.length === 0) return 0;
+    if (agg === "avg") return nums.reduce((a,b) => a + b, 0) / nums.length;
+    if (agg === "max") return Math.max(...nums);
+    if (agg === "min") return Math.min(...nums);
+    return nums.reduce((a,b) => a + b, 0);
+  };
+
+  if (chartType === "pie") {
+    if (!xField) return null;
+    const bucket = {};
+    filtered.forEach(r => {
+      const key = String(r[xIdx] ?? "");
+      if (!bucket[key]) bucket[key] = [];
+      bucket[key].push(yIdx >= 0 ? r[yIdx] : 1);
+    });
+    const data = Object.keys(bucket).map(k => ({ name: k, value: aggFn(bucket[k]) }));
+    return {
+      tooltip: { trigger: "item" },
+      series: [{ type: "pie", radius: ["25%", "60%"], data }]
+    };
+  }
+
+  if (chartType === "scatter") {
+    if (!xField || !yField) return null;
+    const data = filtered.map(r => [Number(r[xIdx]), Number(r[yIdx])]).filter(p => !Number.isNaN(p[0]) && !Number.isNaN(p[1]));
+    return {
+      tooltip: { trigger: "item" },
+      xAxis: { type: "value" },
+      yAxis: { type: "value" },
+      series: [{ type: "scatter", data }]
+    };
+  }
+
+  const categories = [];
+  const catSet = new Set();
+  filtered.forEach(r => {
+    const key = xIdx >= 0 ? String(r[xIdx] ?? "") : "";
+    if (!catSet.has(key)) {
+      catSet.add(key);
+      categories.push(key);
+    }
+  });
+
+  const seriesMap = {};
+  filtered.forEach(r => {
+    const xKey = xIdx >= 0 ? String(r[xIdx] ?? "") : "";
+    const sKey = sIdx >= 0 ? String(r[sIdx] ?? "默认") : "默认";
+    if (!seriesMap[sKey]) seriesMap[sKey] = {};
+    if (!seriesMap[sKey][xKey]) seriesMap[sKey][xKey] = [];
+    seriesMap[sKey][xKey].push(yIdx >= 0 ? r[yIdx] : 1);
+  });
+
+  const series = Object.keys(seriesMap).map(name => {
+    const data = categories.map(c => aggFn(seriesMap[name][c] || []));
+    const type = chartType === "line" || chartType === "area" ? "line" : "bar";
+    const s = { name, type, data };
+    if (chartType === "area") s.areaStyle = {};
+    return s;
+  });
+
+  return {
+    tooltip: { trigger: "axis" },
+    legend: { type: "scroll" },
+    xAxis: { type: "category", data: categories },
+    yAxis: { type: "value" },
+    series
+  };
+}
+
+function renderChartFromConfig() {
+  if (!chart) chart = echarts.init(el("chart"));
+  chart.clear();
+  const columns = lastTableColumns || [];
+  const rows = lastTableRows || [];
+  const types = inferColumnTypes(columns, rows);
+  if (chartConfig.type === "auto" && autoChartOption && (!chartConfig.filters || chartConfig.filters.length === 0)) {
+    chart.setOption(autoChartOption);
+    el("chartHint").textContent = "";
+    return;
+  }
+  const option = buildChartOption(columns, rows, types);
+  if (option) {
+    chart.setOption(option);
+    lastChartOption = option;
+    el("chartHint").textContent = "";
+  } else {
+    el("chartHint").textContent = "当前配置不足以生成图表，请选择维度/指标或切换图表类型。";
+  }
+}
+
+function updateDropZones() {
+  const x = el("dropXValue");
+  const y = el("dropYValue");
+  const s = el("dropSeriesValue");
+  if (x) x.textContent = chartConfig.xField || "未选择";
+  if (y) y.textContent = chartConfig.yField || "未选择";
+  if (s) s.textContent = chartConfig.seriesField || "可选";
+}
+
+function setDropField(zone, field) {
+  ensureManualType();
+  if (zone === "x") chartConfig.xField = field;
+  if (zone === "y") chartConfig.yField = field;
+  if (zone === "series") chartConfig.seriesField = field;
+  updateDropZones();
+  updateBuilderSelects(lastTableColumns || []);
+  renderChartFromConfig();
+}
+
+function ensureManualType() {
+  if (chartConfig.type !== "auto") return;
+  chartConfig.type = "bar";
+  const typeSel = el("chartType");
+  if (typeSel) typeSel.value = "bar";
 }
 
 function renderTableModal() {
@@ -857,12 +1266,22 @@ async function sendMessage() {
       if (!chart) chart = echarts.init(el("chart"));
       chart.clear();
       if (data.echarts_option) {
-        lastChartOption = data.echarts_option;
-        chart.setOption(data.echarts_option);
-        el("chartHint").textContent = "";
+        autoChartOption = data.echarts_option;
+        if (chartConfig.type === "auto") {
+          lastChartOption = data.echarts_option;
+          chart.setOption(data.echarts_option);
+          el("chartHint").textContent = "";
+        } else {
+          renderChartFromConfig();
+        }
       } else {
-        lastChartOption = null;
-        el("chartHint").textContent = "无法从该结果自动推断合适的图表（你可以调整 SQL 让结果更适合可视化，例如：维度列 + 数值列）。";
+        autoChartOption = null;
+        if (chartConfig.type === "auto") {
+          lastChartOption = null;
+          el("chartHint").textContent = "无法从该结果自动推断合适的图表（你可以调整 SQL 让结果更适合可视化，例如：维度列 + 数值列）。";
+        } else {
+          renderChartFromConfig();
+        }
       }
     } else if (eventName === "analysis") {
       if (data.delta) {
@@ -1008,6 +1427,91 @@ if (el("btnTableNext")) el("btnTableNext").onclick = () => {
   tableModalState.page += 1;
   renderTableModal();
 };
+if (el("chartType")) el("chartType").onchange = (e) => {
+  chartConfig.type = e.target.value || "auto";
+  renderChartFromConfig();
+};
+if (el("chartXField")) el("chartXField").onchange = (e) => {
+  chartConfig.xField = e.target.value || "";
+  ensureManualType();
+  updateDropZones();
+  renderChartFromConfig();
+};
+if (el("chartYField")) el("chartYField").onchange = (e) => {
+  chartConfig.yField = e.target.value || "";
+  ensureManualType();
+  updateDropZones();
+  renderChartFromConfig();
+};
+if (el("chartSeriesField")) el("chartSeriesField").onchange = (e) => {
+  chartConfig.seriesField = e.target.value || "";
+  ensureManualType();
+  updateDropZones();
+  renderChartFromConfig();
+};
+if (el("chartAgg")) el("chartAgg").onchange = (e) => {
+  chartConfig.agg = e.target.value || "sum";
+  ensureManualType();
+  renderChartFromConfig();
+};
+if (el("btnAddFilter")) el("btnAddFilter").onclick = () => {
+  const columns = lastTableColumns || [];
+  const rows = lastTableRows || [];
+  const types = inferColumnTypes(columns, rows);
+  const field = columns[0] || "";
+  if (!field) return;
+  chartConfig.filters.push({
+    id: filterSeq++,
+    field,
+    op: types[field] === "number" ? "=" : "contains",
+    value: ""
+  });
+  renderFilterList(columns, types);
+  renderChartFromConfig();
+};
+if (el("btnOpenChartBuilder")) el("btnOpenChartBuilder").onclick = () => {
+  const modal = el("chartBuilderModal");
+  if (modal) modal.classList.add("open");
+};
+if (el("btnCloseChartBuilder")) el("btnCloseChartBuilder").onclick = () => {
+  const modal = el("chartBuilderModal");
+  if (modal) modal.classList.remove("open");
+};
+if (el("chartBuilderModal")) el("chartBuilderModal").addEventListener("click", (e) => {
+  if (e.target.id === "chartBuilderModal") e.currentTarget.classList.remove("open");
+});
+if (el("btnResetChartConfig")) el("btnResetChartConfig").onclick = () => {
+  chartConfig.type = "auto";
+  chartConfig.xField = "";
+  chartConfig.yField = "";
+  chartConfig.seriesField = "";
+  chartConfig.agg = "sum";
+  chartConfig.filters = [];
+  updateChartSchema();
+  renderChartFromConfig();
+};
+document.querySelectorAll(".drop-zone").forEach(zone => {
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    zone.classList.add("drag-over");
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("drag-over");
+    const field = e.dataTransfer.getData("text/plain");
+    if (!field) return;
+    const target = zone.getAttribute("data-drop");
+    if (target) setDropField(target, field);
+  });
+});
+document.querySelectorAll(".drop-clear").forEach(btn => {
+  btn.addEventListener("click", (e) => {
+    const target = e.currentTarget.getAttribute("data-clear");
+    if (!target) return;
+    setDropField(target, "");
+  });
+});
 if (el("btnExportChart")) el("btnExportChart").onclick = downloadChart;
 if (el("btnExportReport")) el("btnExportReport").onclick = exportHtmlReport;
 if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
@@ -1087,10 +1591,12 @@ function showArtifact(artifact) {
   if (artifact.question) lastUserQuestion = artifact.question;
   if (artifact.analysis) lastAnalysisText = artifact.analysis;
   if (artifact.chart) {
+    autoChartOption = artifact.chart;
     lastChartOption = artifact.chart;
     chart.setOption(artifact.chart);
     el("chartHint").textContent = "";
   } else {
+    autoChartOption = null;
     lastChartOption = null;
     el("chartHint").textContent = "该问题未生成图表";
   }

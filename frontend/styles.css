@@ -615,6 +615,149 @@ textarea:focus {
   justify-content: flex-end;
   gap: 8px;
 }
+.builder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.builder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.builder-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+.builder-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.builder-field select {
+  background: rgba(255,255,255,.9);
+  border: 1px solid rgba(11, 16, 32, 0.18);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.builder-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.field-panel, .drop-panel, .role-panel, .filter-panel {
+  background: rgba(255,255,255,.8);
+  border: 1px solid rgba(11, 16, 32, 0.1);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+}
+.field-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.field-chip {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 180, 255, 0.35);
+  background: rgba(0, 180, 255, 0.08);
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+}
+.field-chip:active {
+  cursor: grabbing;
+}
+.drop-zone {
+  border: 1px dashed rgba(0, 180, 255, 0.35);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.drop-zone.drag-over {
+  background: rgba(0, 180, 255, 0.08);
+  border-color: rgba(0, 180, 255, 0.6);
+}
+.drop-title {
+  font-size: 12px;
+  color: var(--muted);
+}
+.drop-value {
+  font-size: 13px;
+  color: var(--text);
+}
+.drop-clear {
+  align-self: flex-end;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.role-list, .filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+}
+.role-row, .filter-row {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 8px;
+  align-items: center;
+}
+.role-row select {
+  background: rgba(255,255,255,.9);
+  border: 1px solid rgba(11, 16, 32, 0.18);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.filter-row {
+  grid-template-columns: 1fr 120px 1fr auto;
+}
+.filter-row select,
+.filter-row input {
+  background: rgba(255,255,255,.9);
+  border: 1px solid rgba(11, 16, 32, 0.18);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.filter-row .ghost {
+  padding: 4px 8px;
+}
+.chart-builder-card {
+  width: min(1120px, 96vw);
+  max-height: 90vh;
+}
+.chart-builder-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+}
+
+@media (max-width: 1200px) {
+  .builder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .builder-split {
+    grid-template-columns: 1fr;
+  }
+}
 
 .error { color: var(--danger); }
 

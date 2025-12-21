@@ -87,6 +87,7 @@
         <div class="title">图形化</div>
       </div>
       <div class="chart-actions pad">
+        <button id="btnOpenChartBuilder" class="ghost">可视化设置</button>
         <button id="btnExportChart" class="ghost">导出图表</button>
       </div>
       <div id="chart" class="chart"></div>
@@ -230,6 +231,93 @@
     </div>
   </div>
 
-  <script src="/app.js?v=30"></script>
+  <div id="chartBuilderModal" class="modal">
+    <div class="modal-card chart-builder-card">
+      <div class="modal-header">
+        <div class="title">可视化设置</div>
+        <button id="btnCloseChartBuilder" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body chart-builder-body">
+        <div class="builder-header">
+          <div class="subhead">基于当前查询结果</div>
+          <div class="builder-actions">
+            <button id="btnResetChartConfig" class="ghost">恢复自动</button>
+          </div>
+        </div>
+        <div class="builder-grid">
+          <label class="builder-field">
+            <span>图表类型</span>
+            <select id="chartType">
+              <option value="auto">自动</option>
+              <option value="bar">柱状图</option>
+              <option value="line">折线图</option>
+              <option value="area">面积图</option>
+              <option value="pie">饼图</option>
+              <option value="scatter">散点图</option>
+            </select>
+          </label>
+          <label class="builder-field">
+            <span>维度(X)</span>
+            <select id="chartXField"></select>
+          </label>
+          <label class="builder-field">
+            <span>指标(Y)</span>
+            <select id="chartYField"></select>
+          </label>
+          <label class="builder-field">
+            <span>系列</span>
+            <select id="chartSeriesField"></select>
+          </label>
+          <label class="builder-field">
+            <span>聚合</span>
+            <select id="chartAgg">
+              <option value="sum">求和</option>
+              <option value="avg">平均</option>
+              <option value="count">计数</option>
+              <option value="max">最大值</option>
+              <option value="min">最小值</option>
+            </select>
+          </label>
+        </div>
+        <div class="builder-split">
+          <div class="field-panel">
+            <div class="subhead">字段</div>
+            <div id="fieldList" class="field-list"></div>
+          </div>
+          <div class="drop-panel">
+            <div class="subhead">拖拽建图</div>
+            <div class="drop-zone" data-drop="x">
+              <div class="drop-title">维度(X)</div>
+              <div class="drop-value" id="dropXValue">未选择</div>
+              <button class="ghost drop-clear" data-clear="x">清空</button>
+            </div>
+            <div class="drop-zone" data-drop="y">
+              <div class="drop-title">指标(Y)</div>
+              <div class="drop-value" id="dropYValue">未选择</div>
+              <button class="ghost drop-clear" data-clear="y">清空</button>
+            </div>
+            <div class="drop-zone" data-drop="series">
+              <div class="drop-title">系列</div>
+              <div class="drop-value" id="dropSeriesValue">可选</div>
+              <button class="ghost drop-clear" data-clear="series">清空</button>
+            </div>
+          </div>
+        </div>
+        <div class="builder-split">
+          <div class="role-panel">
+            <div class="subhead">指标/维度管理</div>
+            <div id="roleList" class="role-list"></div>
+          </div>
+          <div class="filter-panel">
+            <div class="subhead">可视化筛选器</div>
+            <div id="filterList" class="filter-list"></div>
+            <button id="btnAddFilter" class="btn-mini">添加筛选</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=31"></script>
 </body>
 </html>
