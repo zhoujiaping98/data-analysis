@@ -70,6 +70,7 @@ async def init_sqlite() -> None:
                 suggest_text TEXT,
                 safety_text TEXT,
                 fix_text TEXT,
+                view_json TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -133,6 +134,8 @@ async def init_sqlite() -> None:
             cur.execute("ALTER TABLE message_artifacts ADD COLUMN safety_text TEXT")
         if "fix_text" not in artifact_cols:
             cur.execute("ALTER TABLE message_artifacts ADD COLUMN fix_text TEXT")
+        if "view_json" not in artifact_cols:
+            cur.execute("ALTER TABLE message_artifacts ADD COLUMN view_json TEXT")
         audit_cols = {r["name"] for r in cur.execute("PRAGMA table_info(sql_audits)").fetchall()}
         if audit_cols:
             if "elapsed_ms" not in audit_cols:
@@ -343,12 +346,13 @@ async def add_message_artifact(
     suggest_text: str | None = None,
     safety_text: str | None = None,
     fix_text: str | None = None,
+    view_json: str | None = None,
 ) -> None:
     async with _lock:
         conn = _connect()
         conn.execute(
-            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, analysis_text, explain_text, suggest_text, safety_text, fix_text, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, analysis_text, explain_text, suggest_text, safety_text, fix_text, view_json, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 conv_id,
                 user_message_id,
@@ -361,6 +365,7 @@ async def add_message_artifact(
                 suggest_text,
                 safety_text,
                 fix_text,
+                view_json,
                 datetime.utcnow().isoformat(),
             ),
         )

@@ -6,3 +6,4 @@ class SqlExecuteRequest(BaseModel):
     message_id: int
     sql: str
     with_analysis: bool = True
+    view: dict | None = None

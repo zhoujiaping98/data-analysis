@@ -149,6 +149,7 @@ async def execute_sql(
             suggest_text=suggest_text,
             safety_text="\n".join(safety_tips) if safety_tips else None,
             fix_text=None,
+            view_json=orjson.dumps(req.view).decode("utf-8") if req.view else None,
         )
     except Exception:
         pass
@@ -180,4 +181,5 @@ async def execute_sql(
         "explain": explain_text,
         "suggest": suggest_text,
         "safety": safety_tips,
+        "view": req.view,
     }

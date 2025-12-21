@@ -51,6 +51,7 @@ async def conversation_messages(conversation_id: str, user=Depends(get_current_u
                     "suggest": artifact.get("suggest_text"),
                     "safety": artifact.get("safety_text"),
                     "fix": artifact.get("fix_text"),
+                    "view": orjson.loads(artifact["view_json"]) if artifact.get("view_json") else None,
                 }
             except Exception:
                 pass

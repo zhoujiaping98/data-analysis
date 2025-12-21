@@ -22,6 +22,18 @@ let lastSqlSuggest = "";
 let lastSqlSafety = "";
 let lastSqlFix = "";
 let schemaChangeExpanded = false;
+let rawTableColumns = [];
+let rawTableRows = [];
+let tableViewState = {
+  filters: [],
+  sortField: "",
+  sortDir: "asc",
+  derived: [],
+  aggregation: null
+};
+let tableFilterSeq = 1;
+let tableViewDirty = false;
+let filterInputTimer = null;
 let chartConfig = {
   type: "auto",
   xField: "",
@@ -171,6 +183,40 @@ function openSqlModal() {
   modal.classList.add("open");
 }
 
+const sqlSnippets = [
+  { name: "TopN", snippet: "SELECT [字段], SUM([数值]) AS total FROM [表] GROUP BY [字段] ORDER BY total DESC LIMIT 10;" },
+  { name: "按日汇总", snippet: "SELECT DATE([日期]) AS day, SUM([数值]) AS total FROM [表] GROUP BY day ORDER BY day;" },
+  { name: "按月汇总", snippet: "SELECT DATE_FORMAT([日期], '%Y-%m') AS month, SUM([数值]) AS total FROM [表] GROUP BY month ORDER BY month;" },
+  { name: "去重计数", snippet: "SELECT COUNT(DISTINCT [字段]) AS cnt FROM [表];" },
+  { name: "条件筛选", snippet: "SELECT * FROM [表] WHERE [字段] = '[值]' LIMIT 100;" },
+];
+
+function renderSqlSnippets() {
+  const list = el("sqlSnippetList");
+  if (!list) return;
+  list.innerHTML = "";
+  sqlSnippets.forEach(s => {
+    const chip = document.createElement("div");
+    chip.className = "snippet-chip";
+    chip.textContent = s.name;
+    chip.onclick = () => insertSnippet(s.snippet);
+    list.appendChild(chip);
+  });
+}
+
+function insertSnippet(snippet) {
+  const editor = el("sqlEditor");
+  if (!editor) return;
+  const start = editor.selectionStart || 0;
+  const end = editor.selectionEnd || 0;
+  const text = editor.value || "";
+  editor.value = text.slice(0, start) + snippet + text.slice(end);
+  editor.focus();
+  const pos = start + snippet.length;
+  editor.selectionStart = pos;
+  editor.selectionEnd = pos;
+}
+
 function closeSqlModal() {
   const modal = el("sqlModal");
   if (!modal) return;
@@ -243,6 +289,7 @@ async function runSql() {
       suggest: data.suggest || "",
       safety: Array.isArray(data.safety) ? data.safety.join("\n") : (data.safety || ""),
       fix: "",
+      view: tableViewState,
       question,
       message_id: activeMessageId
     });
@@ -888,6 +935,9 @@ async function loadConversation(convId) {
     fieldRoles: {},
     filters: []
   };
+  rawTableColumns = [];
+  rawTableRows = [];
+  tableViewState = { filters: [], sortField: "", sortDir: "asc", derived: [], aggregation: null };
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
 
@@ -915,19 +965,411 @@ async function loadConversation(convId) {
       reportContext.question = latestUser.content || "";
       reportContext.analysis = latestUser.artifact.analysis;
     }
+    if (latestUser.artifact && latestUser.artifact.view) {
+      tableViewState = {
+        filters: latestUser.artifact.view.filters || [],
+        sortField: latestUser.artifact.view.sortField || "",
+        sortDir: latestUser.artifact.view.sortDir || "asc",
+        derived: latestUser.artifact.view.derived || [],
+        aggregation: latestUser.artifact.view.aggregation || null
+      };
+      tableViewDirty = false;
+    }
   }
 }
 
 function renderTable(columns, rows) {
-  lastTableColumns = columns || [];
-  lastTableRows = rows || [];
+  const prevKey = (rawTableColumns || []).join("|");
+  const nextKey = (columns || []).join("|");
+  if (prevKey && nextKey && prevKey !== nextKey) {
+    tableViewState = { filters: [], sortField: "", sortDir: "asc", derived: [], aggregation: null };
+  }
+  rawTableColumns = columns || [];
+  rawTableRows = rows || [];
+  refreshTableViews();
+  tableViewDirty = false;
+}
+
+function refreshTableViews() {
+  const processed = getTableProcessedData();
+  lastTableColumns = processed.columns;
+  lastTableRows = processed.rows;
+  tableModalState.page = 1;
   updateExportHint();
-  renderTableInto(el("tableWrap"), columns, rows);
+  renderTableInto(el("tableWrap"), processed.columns, processed.rows);
   updateChartSchema();
   renderChartFromConfig();
   renderTableModal();
+  renderTableOps();
+  if (tableViewDirty) debounceSaveTableView();
 }
 
+function getTableProcessedData() {
+  const columns = rawTableColumns || [];
+  let rows = rawTableRows || [];
+  if (!columns.length) return { columns, rows };
+  rows = applyTableFilters(columns, rows);
+  let { columns: derivedCols, rows: derivedRows } = applyDerivedColumns(columns, rows);
+  let aggResult = applyAggregation(derivedCols, derivedRows);
+  let finalCols = aggResult.columns;
+  let finalRows = aggResult.rows;
+  finalRows = applyTableSort(finalCols, finalRows);
+  return { columns: finalCols, rows: finalRows };
+}
+
+function applyTableFilters(columns, rows) {
+  const filters = tableViewState.filters || [];
+  if (!filters.length) return rows;
+  const types = inferColumnTypes(columns, rows);
+  const colIndex = {};
+  columns.forEach((c, idx) => colIndex[c] = idx);
+  return rows.filter(r => {
+    return filters.every(f => {
+      const idx = colIndex[f.field];
+      if (idx === undefined) return true;
+      const v = r[idx];
+      if (f.op === "contains") return String(v ?? "").includes(f.value || "");
+      if (f.op === "=") return String(v ?? "") === String(f.value ?? "");
+      if (f.op === "!=") return String(v ?? "") !== String(f.value ?? "");
+      const n = Number(v);
+      const target = Number(f.value);
+      if (Number.isNaN(n)) return false;
+      if (f.op === ">") return n > target;
+      if (f.op === "<") return n < target;
+      if (f.op === ">=") return n >= target;
+      if (f.op === "<=") return n <= target;
+      if (f.op === "between") {
+        const parts = String(f.value || "").split(",");
+        const min = Number(parts[0]);
+        const max = Number(parts[1]);
+        if (Number.isNaN(min) || Number.isNaN(max)) return true;
+        return n >= min && n <= max;
+      }
+      if (f.op === "auto") {
+        return types[f.field] === "number" ? Number(v) > 0 : String(v ?? "").length > 0;
+      }
+      return true;
+    });
+  });
+}
+
+function applyTableSort(columns, rows) {
+  const field = tableViewState.sortField;
+  if (!field) return rows;
+  const idx = columns.indexOf(field);
+  if (idx < 0) return rows;
+  const dir = tableViewState.sortDir === "desc" ? -1 : 1;
+  const sorted = [...rows];
+  sorted.sort((a, b) => {
+    const va = a[idx];
+    const vb = b[idx];
+    const na = Number(va);
+    const nb = Number(vb);
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) return (na - nb) * dir;
+    return String(va ?? "").localeCompare(String(vb ?? "")) * dir;
+  });
+  return sorted;
+}
+
+function applyDerivedColumns(columns, rows) {
+  const derived = tableViewState.derived || [];
+  if (!derived.length) return { columns, rows };
+  const colIndex = {};
+  columns.forEach((c, idx) => colIndex[c] = idx);
+  const newCols = [...columns];
+  const derivedTargets = derived.map(d => {
+    const name = d.name;
+    let idx = newCols.indexOf(name);
+    if (idx < 0) {
+      newCols.push(name);
+      idx = newCols.length - 1;
+    }
+    return { ...d, idx };
+  });
+  const newRows = rows.map(r => {
+    const row = [...r];
+    derivedTargets.forEach(d => {
+      try {
+        const expr = (d.expr || "").replace(/\[([^\]]+)\]/g, (_, name) => {
+          const idx = colIndex[name];
+          if (idx === undefined) return "0";
+          return `fn.num(row[${idx}])`;
+        });
+        const fn = new Function(
+          "row",
+          "fn",
+          `return ${expr};`
+        );
+        const fnMap = {
+          num: (v) => {
+            const n = Number(v);
+            return Number.isNaN(n) ? 0 : n;
+          },
+          str: (v) => String(v ?? ""),
+          concat: (...args) => args.map(v => v ?? "").join(""),
+          upper: (v) => String(v ?? "").toUpperCase(),
+          lower: (v) => String(v ?? "").toLowerCase(),
+          substr: (v, start, len) => {
+            const s = String(v ?? "");
+            const st = Number(start || 0);
+            if (len === undefined || len === null) return s.slice(st);
+            return s.slice(st, st + Number(len));
+          },
+          date: (v) => new Date(v),
+          year: (v) => {
+            const dte = new Date(v);
+            return Number.isNaN(dte.getTime()) ? "" : dte.getFullYear();
+          },
+          month: (v) => {
+            const dte = new Date(v);
+            return Number.isNaN(dte.getTime()) ? "" : dte.getMonth() + 1;
+          },
+          day: (v) => {
+            const dte = new Date(v);
+            return Number.isNaN(dte.getTime()) ? "" : dte.getDate();
+          },
+          formatDate: (v, fmt) => {
+            const dte = new Date(v);
+            if (Number.isNaN(dte.getTime())) return "";
+            const yyyy = dte.getFullYear();
+            const mm = String(dte.getMonth() + 1).padStart(2, "0");
+            const dd = String(dte.getDate()).padStart(2, "0");
+            const pattern = String(fmt || "YYYY-MM-DD");
+            return pattern
+              .replace("YYYY", String(yyyy))
+              .replace("MM", mm)
+              .replace("DD", dd);
+          }
+        };
+        const value = fn(row, fnMap);
+        row[d.idx] = value;
+      } catch (_) {
+        row[d.idx] = null;
+      }
+    });
+    return row;
+  });
+  return { columns: newCols, rows: newRows };
+}
+
+function applyAggregation(columns, rows) {
+  const agg = tableViewState.aggregation;
+  if (!agg || !agg.groupBy) return { columns, rows };
+  const groupIdx = columns.indexOf(agg.groupBy);
+  if (groupIdx < 0) return { columns, rows };
+  const valueIdx = agg.field ? columns.indexOf(agg.field) : -1;
+  const bucket = {};
+  rows.forEach(r => {
+    const key = String(r[groupIdx] ?? "");
+    if (!bucket[key]) bucket[key] = [];
+    bucket[key].push(valueIdx >= 0 ? r[valueIdx] : 1);
+  });
+  const result = [];
+  const metricName = agg.func.toUpperCase() + "(" + (agg.field || "*") + ")";
+  Object.keys(bucket).forEach(k => {
+    const values = bucket[k];
+    const nums = values.map(v => Number(v)).filter(v => !Number.isNaN(v));
+    let val = 0;
+    if (agg.func === "count") val = values.length;
+    else if (!nums.length) val = 0;
+    else if (agg.func === "avg") val = nums.reduce((a,b)=>a+b,0) / nums.length;
+    else if (agg.func === "max") val = Math.max(...nums);
+    else if (agg.func === "min") val = Math.min(...nums);
+    else val = nums.reduce((a,b)=>a+b,0);
+    result.push([k, val]);
+  });
+  return { columns: [agg.groupBy, metricName], rows: result };
+}
+
+function renderTableOps() {
+  renderTableFilters();
+  renderDerivedList();
+  updateTableSortOptions();
+  updateAggOptions();
+}
+
+function updateTableSortOptions() {
+  const sel = el("tableSortField");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const opt = document.createElement("option");
+  opt.value = "";
+  opt.textContent = "不排序";
+  sel.appendChild(opt);
+  (rawTableColumns || []).forEach(c => {
+    const o = document.createElement("option");
+    o.value = c;
+    o.textContent = c;
+    if (c === tableViewState.sortField) o.selected = true;
+    sel.appendChild(o);
+  });
+  const dir = el("tableSortDir");
+  if (dir) dir.value = tableViewState.sortDir || "asc";
+}
+
+function renderTableFilters() {
+  const list = el("tableFilterList");
+  if (!list) return;
+  list.innerHTML = "";
+  const columns = rawTableColumns || [];
+  const types = inferColumnTypes(columns, rawTableRows || []);
+  (tableViewState.filters || []).forEach(f => {
+    const row = document.createElement("div");
+    row.className = "filter-row";
+    const colSel = document.createElement("select");
+    columns.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      if (c === f.field) opt.selected = true;
+      colSel.appendChild(opt);
+    });
+    const opSel = document.createElement("select");
+    const isNum = types[f.field] === "number";
+    const ops = isNum ? ["=", ">", "<", ">=", "<=", "between"] : ["contains", "=", "!="];
+    ops.forEach(op => {
+      const opt = document.createElement("option");
+      opt.value = op;
+      opt.textContent = op === "between" ? "区间" : op;
+      if (op === f.op) opt.selected = true;
+      opSel.appendChild(opt);
+    });
+    const val = document.createElement("input");
+    val.placeholder = f.op === "between" ? "最小值,最大值" : "筛选值";
+    val.value = f.value || "";
+    let composing = false;
+    val.addEventListener("compositionstart", () => {
+      composing = true;
+    });
+    val.addEventListener("compositionend", () => {
+      composing = false;
+      f.value = val.value;
+      tableViewDirty = true;
+      debounceTableFilterRefresh();
+    });
+    const del = document.createElement("button");
+    del.className = "ghost";
+    del.type = "button";
+    del.textContent = "删除";
+    del.onclick = () => {
+      tableViewState.filters = tableViewState.filters.filter(x => x.id !== f.id);
+      tableViewDirty = true;
+      refreshTableViews();
+    };
+    colSel.onchange = () => {
+      f.field = colSel.value;
+      f.op = types[f.field] === "number" ? "=" : "contains";
+      tableViewDirty = true;
+      refreshTableViews();
+    };
+    opSel.onchange = () => {
+      f.op = opSel.value;
+      tableViewDirty = true;
+      refreshTableViews();
+    };
+    val.oninput = () => {
+      if (composing) return;
+      f.value = val.value;
+      tableViewDirty = true;
+      debounceTableFilterRefresh();
+    };
+    row.appendChild(colSel);
+    row.appendChild(opSel);
+    row.appendChild(val);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function renderDerivedList() {
+  const list = el("deriveList");
+  if (!list) return;
+  list.innerHTML = "";
+  (tableViewState.derived || []).forEach((d, idx) => {
+    const row = document.createElement("div");
+    row.className = "derive-item";
+    const info = document.createElement("div");
+    info.innerHTML = `<div>${d.name}</div><div class="muted">${d.expr}</div>`;
+    const del = document.createElement("button");
+    del.className = "ghost";
+    del.type = "button";
+    del.textContent = "删除";
+    del.onclick = () => {
+      tableViewState.derived.splice(idx, 1);
+      tableViewDirty = true;
+      refreshTableViews();
+    };
+    row.appendChild(info);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function debounceTableFilterRefresh() {
+  clearTimeout(filterInputTimer);
+  filterInputTimer = setTimeout(() => {
+    refreshTableViews();
+  }, 300);
+}
+
+function updateAggOptions() {
+  const groupSel = el("aggGroupBy");
+  const fieldSel = el("aggField");
+  if (!groupSel || !fieldSel) return;
+  const derived = applyDerivedColumns(rawTableColumns || [], rawTableRows || []);
+  const cols = derived.columns || [];
+  groupSel.innerHTML = "";
+  fieldSel.innerHTML = "";
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "";
+  noneOpt.textContent = "不聚合";
+  groupSel.appendChild(noneOpt.cloneNode(true));
+  fieldSel.appendChild(noneOpt.cloneNode(true));
+  cols.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (tableViewState.aggregation && tableViewState.aggregation.groupBy === c) opt.selected = true;
+    groupSel.appendChild(opt);
+  });
+  cols.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (tableViewState.aggregation && tableViewState.aggregation.field === c) opt.selected = true;
+    fieldSel.appendChild(opt);
+  });
+  const funcSel = el("aggFunc");
+  if (funcSel) funcSel.value = (tableViewState.aggregation && tableViewState.aggregation.func) || "sum";
+}
+
+let saveViewTimer = null;
+function debounceSaveTableView() {
+  if (!activeConversationId || !activeMessageId) return;
+  if (!el("sqlBox")?.textContent) return;
+  clearTimeout(saveViewTimer);
+  saveViewTimer = setTimeout(saveTableView, 500);
+}
+
+async function saveTableView() {
+  if (!activeConversationId || !activeMessageId) return;
+  try {
+    await apiFetch("/sql/execute", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        conversation_id: activeConversationId,
+        message_id: activeMessageId,
+        sql: el("sqlBox").textContent || "",
+        with_analysis: false,
+        view: tableViewState
+      })
+    });
+    tableViewDirty = false;
+  } catch (_) {
+    // ignore
+  }
+}
 function inferColumnTypes(columns, rows) {
   const types = {};
   columns.forEach((c, idx) => {
@@ -1318,7 +1760,8 @@ function renderTableModal() {
   if (!wrap || !info) return;
   const query = (tableModalState.query || "").toLowerCase();
   const pageSize = tableModalState.pageSize || 50;
-  const rows = (lastTableRows || []).filter(r => {
+  const data = getTableProcessedData();
+  const rows = (data.rows || []).filter(r => {
     if (!query) return true;
     return r.some(v => String(v ?? "").toLowerCase().includes(query));
   });
@@ -1327,7 +1770,7 @@ function renderTableModal() {
   if (tableModalState.page < 1) tableModalState.page = 1;
   const start = (tableModalState.page - 1) * pageSize;
   const pageRows = rows.slice(start, start + pageSize);
-  renderTableInto(wrap, lastTableColumns || [], pageRows);
+  renderTableInto(wrap, data.columns || [], pageRows);
   info.textContent = `${tableModalState.page} / ${totalPages}`;
   const prev = el("btnTablePrev");
   const next = el("btnTableNext");
@@ -1340,6 +1783,8 @@ async function sendMessage() {
   if (!text) return;
   lastUserQuestion = text;
   reportContext.question = text;
+  tableViewState = { filters: [], sortField: "", sortDir: "asc", derived: [], aggregation: null };
+  tableViewDirty = false;
   if (!activeConversationId) await newConversation();
   el("chatInput").value = "";
   addChatMessage("user", text);
@@ -1564,6 +2009,80 @@ if (el("btnTableNext")) el("btnTableNext").onclick = () => {
   tableModalState.page += 1;
   renderTableModal();
 };
+if (el("tableSortField")) el("tableSortField").onchange = (e) => {
+  tableViewState.sortField = e.target.value || "";
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("tableSortDir")) el("tableSortDir").onchange = (e) => {
+  tableViewState.sortDir = e.target.value || "asc";
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("btnClearSort")) el("btnClearSort").onclick = () => {
+  tableViewState.sortField = "";
+  tableViewState.sortDir = "asc";
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("btnAddTableFilter")) el("btnAddTableFilter").onclick = () => {
+  const columns = rawTableColumns || [];
+  if (!columns.length) return;
+  tableViewState.filters.push({
+    id: tableFilterSeq++,
+    field: columns[0],
+    op: "contains",
+    value: ""
+  });
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("btnAddDerived")) el("btnAddDerived").onclick = () => {
+  const name = (el("deriveName")?.value || "").trim();
+  const expr = (el("deriveExpr")?.value || "").trim();
+  if (!name || !expr) return;
+  tableViewState.derived.push({ name, expr });
+  if (el("deriveName")) el("deriveName").value = "";
+  if (el("deriveExpr")) el("deriveExpr").value = "";
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("exprHelpLink")) el("exprHelpLink").onclick = (e) => {
+  e.stopPropagation();
+  const pop = el("exprHelp");
+  if (!pop) return;
+  pop.classList.toggle("open");
+};
+document.addEventListener("click", (e) => {
+  const pop = el("exprHelp");
+  if (!pop || !pop.classList.contains("open")) return;
+  const btn = el("btnExprHelp");
+  if (pop.contains(e.target) || (btn && btn.contains(e.target))) return;
+  pop.classList.remove("open");
+});
+if (el("btnApplyAgg")) el("btnApplyAgg").onclick = () => {
+  const groupBy = el("aggGroupBy")?.value || "";
+  const field = el("aggField")?.value || "";
+  const func = el("aggFunc")?.value || "sum";
+  if (!groupBy) {
+    tableViewState.aggregation = null;
+  } else {
+    tableViewState.aggregation = { groupBy, field, func };
+  }
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("btnClearAgg")) el("btnClearAgg").onclick = () => {
+  tableViewState.aggregation = null;
+  tableViewDirty = true;
+  refreshTableViews();
+};
+if (el("tableSearch")) el("tableSearch").addEventListener("input", () => {
+  tableViewDirty = true;
+});
+if (el("tablePageSize")) el("tablePageSize").onchange = () => {
+  tableViewDirty = true;
+};
 if (el("chartType")) el("chartType").onchange = (e) => {
   chartConfig.type = e.target.value || "auto";
   renderChartFromConfig();
@@ -1674,6 +2193,7 @@ el("chatInput").addEventListener("keydown", (e) => {
 
 // Auto login if token exists
 (async () => {
+  renderSqlSnippets();
   await refreshSchemaTables();
   await refreshUploads();
   if (token) {
@@ -1735,6 +2255,19 @@ function showArtifact(artifact) {
     safety: artifact.safety || "",
     fix: artifact.fix || ""
   });
+  if (artifact.view) {
+    tableViewState = {
+      filters: artifact.view.filters || [],
+      sortField: artifact.view.sortField || "",
+      sortDir: artifact.view.sortDir || "asc",
+      derived: artifact.view.derived || [],
+      aggregation: artifact.view.aggregation || null
+    };
+    tableViewDirty = false;
+  } else {
+    tableViewState = { filters: [], sortField: "", sortDir: "asc", derived: [], aggregation: null };
+  }
+  refreshTableViews();
   if (artifact.message_id && artifact.question) {
     messageIdToQuestion.set(artifact.message_id, artifact.question);
   }

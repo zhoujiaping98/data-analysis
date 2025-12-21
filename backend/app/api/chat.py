@@ -229,6 +229,7 @@ async def chat_sse(
                 suggest_text=suggest_text,
                 safety_text="\n".join(safety_tips) if safety_tips else None,
                 fix_text=None,
+                view_json=None,
             )
         except Exception:
             pass

@@ -236,6 +236,60 @@
             <button id="btnTableNext" class="ghost">下一页</button>
           </div>
         </div>
+        <div class="table-ops">
+          <div class="table-op">
+            <div class="subhead">排序</div>
+            <div class="table-sort">
+              <select id="tableSortField"></select>
+              <select id="tableSortDir">
+                <option value="asc">升序</option>
+                <option value="desc">降序</option>
+              </select>
+              <button id="btnClearSort" class="ghost">清除</button>
+            </div>
+          </div>
+          <div class="table-op">
+            <div class="subhead">过滤</div>
+            <div id="tableFilterList" class="filter-list"></div>
+            <button id="btnAddTableFilter" class="btn-mini">添加过滤</button>
+          </div>
+          <div class="table-op">
+            <div class="subhead">派生列</div>
+            <div class="derive-form">
+              <input id="deriveName" placeholder="列名，如：毛利" />
+              <input id="deriveExpr" placeholder="如：[销售额]-[成本]" />
+              <a id="exprHelpLink" class="help-link" href="javascript:void(0)">?</a>
+              <button id="btnAddDerived" class="btn-mini">添加</button>
+            </div>
+            <div id="deriveList" class="filter-list"></div>
+            <div id="exprHelp" class="help-pop">
+              <div class="help-title">表达式说明</div>
+              <div class="help-line"><span>字段引用</span><span>[字段名]</span></div>
+              <div class="help-line"><span>运算符</span><span>+  -  *  /  ( )</span></div>
+              <div class="help-line"><span>字符串</span><span>concat(a,b), upper(x), lower(x), substr(x,start,len)</span></div>
+              <div class="help-line"><span>日期</span><span>date(x), year(x), month(x), day(x), formatDate(x,'YYYY-MM-DD')</span></div>
+              <div class="help-line"><span>示例</span><span>[order_count] + 1</span></div>
+              <div class="help-line"><span>示例</span><span>concat([省], '-', [市])</span></div>
+              <div class="help-line"><span>示例</span><span>formatDate([下单时间], 'YYYY-MM')</span></div>
+            </div>
+          </div>
+          <div class="table-op">
+            <div class="subhead">聚合</div>
+            <div class="table-agg">
+              <select id="aggGroupBy"></select>
+              <select id="aggField"></select>
+              <select id="aggFunc">
+                <option value="sum">SUM</option>
+                <option value="avg">AVG</option>
+                <option value="count">COUNT</option>
+                <option value="max">MAX</option>
+                <option value="min">MIN</option>
+              </select>
+              <button id="btnApplyAgg" class="btn-mini">应用</button>
+              <button id="btnClearAgg" class="ghost">清除</button>
+            </div>
+          </div>
+        </div>
         <div id="tableModalWrap" class="table-wrap"></div>
       </div>
     </div>
@@ -252,6 +306,10 @@
         <div class="sql-run">
           <div id="sqlEditStatus" class="muted"></div>
           <button id="btnRunSql" class="btn-mini">执行 SQL</button>
+        </div>
+        <div class="sql-snippets">
+          <div class="subhead">SQL 片段库</div>
+          <div id="sqlSnippetList" class="snippet-list"></div>
         </div>
       </div>
     </div>
@@ -344,6 +402,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=36"></script>
+  <script src="/app.js?v=42"></script>
 </body>
 </html>
