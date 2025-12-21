@@ -54,6 +54,17 @@ async def init_sqlite() -> None:
                 columns_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS message_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                user_message_id INTEGER NOT NULL,
+                sql_text TEXT NOT NULL,
+                columns_json TEXT NOT NULL,
+                rows_json TEXT NOT NULL,
+                chart_json TEXT,
+                created_at TEXT NOT NULL
+            );
             """
         )
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
@@ -197,28 +208,67 @@ async def delete_conversation(conv_id: str) -> None:
     async with _lock:
         conn = _connect()
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM message_artifacts WHERE conversation_id=?", (conv_id,))
         conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
         conn.commit()
         conn.close()
 
-async def add_message(conv_id: str, role: str, content: str) -> None:
+async def add_message(conv_id: str, role: str, content: str) -> int:
     async with _lock:
         conn = _connect()
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)",
             (conv_id, role, content, datetime.utcnow().isoformat()),
         )
         conn.commit()
+        msg_id = int(cur.lastrowid)
         conn.close()
+        return msg_id
 
 async def get_messages(conv_id: str, limit: int = 30) -> List[Dict[str, Any]]:
     async with _lock:
         conn = _connect()
         rows = conn.execute(
-            "SELECT role, content, created_at FROM messages WHERE conversation_id=? "
+            "SELECT id, role, content, created_at FROM messages WHERE conversation_id=? "
             "ORDER BY id DESC LIMIT ?",
             (conv_id, limit),
         ).fetchall()
         conn.close()
         # reverse to chronological
         return [dict(r) for r in reversed(rows)]
+
+async def add_message_artifact(
+    conv_id: str,
+    user_message_id: int,
+    sql_text: str,
+    columns_json: str,
+    rows_json: str,
+    chart_json: str | None,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                conv_id,
+                user_message_id,
+                sql_text,
+                columns_json,
+                rows_json,
+                chart_json,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def get_message_artifact(conv_id: str, user_message_id: int) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT * FROM message_artifacts WHERE conversation_id=? AND user_message_id=? ORDER BY id DESC LIMIT 1",
+            (conv_id, user_message_id),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None

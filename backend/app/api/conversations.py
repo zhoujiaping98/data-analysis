@@ -10,7 +10,10 @@ from backend.app.core.sqlite_store import (
     get_messages,
     get_conversation,
     delete_conversation,
+    get_message_artifact,
 )
+
+import orjson
 
 router = APIRouter()
 
@@ -31,7 +34,22 @@ async def conversation_messages(conversation_id: str, user=Depends(get_current_u
         raise HTTPException(status_code=404, detail="Conversation not found")
     if conv["owner_username"] != user["username"]:
         raise HTTPException(status_code=403, detail="Forbidden")
-    return await get_messages(conversation_id, limit=50)
+    messages = await get_messages(conversation_id, limit=50)
+    for m in messages:
+        if m["role"] != "user":
+            continue
+        artifact = await get_message_artifact(conversation_id, m["id"])
+        if artifact:
+            try:
+                m["artifact"] = {
+                    "sql": artifact["sql_text"],
+                    "columns": orjson.loads(artifact["columns_json"]),
+                    "rows": orjson.loads(artifact["rows_json"]),
+                    "chart": orjson.loads(artifact["chart_json"]) if artifact["chart_json"] else None,
+                }
+            except Exception:
+                pass
+    return messages
 
 @router.delete("/conversations/{conversation_id}")
 async def remove_conversation(conversation_id: str, user=Depends(get_current_user)):

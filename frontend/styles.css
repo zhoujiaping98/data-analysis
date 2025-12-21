@@ -244,6 +244,14 @@ body::before {
   word-break: break-word;
   box-shadow: 0 12px 24px rgba(11, 16, 32, 0.08);
 }
+.msg.clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.msg.clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 30px rgba(11, 16, 32, 0.12);
+}
 
 .msg.user {
   border-color: rgba(0, 180, 255, 0.3);

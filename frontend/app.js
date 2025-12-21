@@ -4,6 +4,7 @@ let activeConversationId = localStorage.getItem("convId") || "";
 let chart = null;
 let analysisStreaming = "";
 let analysisMsgBodyEl = null;
+const messageArtifacts = new Map();
 
 const el = (id) => document.getElementById(id);
 
@@ -372,7 +373,7 @@ async function newConversation() {
   await loadConversation(data.conversation_id);
 }
 
-function addChatMessage(role, content) {
+function addChatMessage(role, content, options = {}) {
   const box = el("chatHistory");
   const m = document.createElement("div");
   m.className = "msg " + (role === "user" ? "user" : "assistant");
@@ -383,6 +384,11 @@ function addChatMessage(role, content) {
   b.textContent = content;
   m.appendChild(r);
   m.appendChild(b);
+  if (options.artifact && role === "user") {
+    m.classList.add("clickable");
+    m.title = "点击回放 SQL/结果/图表";
+    m.addEventListener("click", () => showArtifact(options.artifact));
+  }
   box.appendChild(m);
   box.scrollTop = box.scrollHeight;
   return { container: m, body: b };
@@ -402,12 +408,20 @@ async function loadConversation(convId) {
   el("chartHint").textContent = "";
   analysisStreaming = "";
   analysisMsgBodyEl = null;
+  messageArtifacts.clear();
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
 
   const resp = await apiFetch(`/conversations/${convId}/messages`);
   const msgs = await resp.json();
-  msgs.forEach(m => addChatMessage(m.role, m.content));
+  msgs.forEach(m => {
+    if (m.role === "user" && m.artifact) {
+      messageArtifacts.set(m.id, m.artifact);
+      addChatMessage(m.role, m.content, { artifact: m.artifact });
+    } else {
+      addChatMessage(m.role, m.content);
+    }
+  });
 }
 
 function renderTable(columns, rows) {
@@ -561,5 +575,20 @@ function toggleDrawer(open) {
   } else {
     drawer.classList.remove("open");
     overlay.classList.remove("open");
+  }
+}
+
+function showArtifact(artifact) {
+  if (!artifact) return;
+  el("statusLine").textContent = "回放";
+  el("sqlBox").textContent = artifact.sql || "";
+  renderTable(artifact.columns || [], artifact.rows || []);
+  if (!chart) chart = echarts.init(el("chart"));
+  chart.clear();
+  if (artifact.chart) {
+    chart.setOption(artifact.chart);
+    el("chartHint").textContent = "";
+  } else {
+    el("chartHint").textContent = "该问题未生成图表";
   }
 }

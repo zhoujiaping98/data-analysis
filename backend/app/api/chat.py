@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
+import orjson
 from typing import AsyncGenerator, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,7 +13,13 @@ from backend.app.api.deps import get_current_user
 from backend.app.schemas.chat import ChatRequest
 from backend.app.core.sse import sse_event, sse_stream
 from backend.app.core.config import settings
-from backend.app.core.sqlite_store import add_message, upsert_conversation, get_messages, get_conversation
+from backend.app.core.sqlite_store import (
+    add_message,
+    add_message_artifact,
+    upsert_conversation,
+    get_messages,
+    get_conversation,
+)
 from backend.app.core.mysql import run_sql, extract_table_names, list_tables
 from backend.app.services.schema_context import build_schema_context
 from backend.app.services.sql_generator import generate_sql
@@ -23,6 +31,12 @@ from backend.app.core.uploads import cleanup_expired_uploads
 
 router = APIRouter()
 log = logging.getLogger("chat")
+
+
+def _json_default(obj):
+    if isinstance(obj, (datetime,)):
+        return obj.isoformat()
+    return str(obj)
 
 
 @router.post("/chat/sse")
@@ -38,7 +52,7 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
 
         # Ensure conversation exists
         await upsert_conversation(req.conversation_id, owner_username=user["username"])
-        await add_message(req.conversation_id, "user", req.message)
+        user_msg_id = await add_message(req.conversation_id, "user", req.message)
         conv = await get_conversation(req.conversation_id)
         existing_title = (conv.get("title") or "").strip() if conv else ""
         if conv and (not existing_title or existing_title in {"New Conversation", "新会话"}):
@@ -139,6 +153,18 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
             yield sse_event("analysis", {"delta": chunk, "request_id": request_id})
         analysis = "".join(analysis_parts).strip()
         yield sse_event("analysis", {"text": analysis, "request_id": request_id, "done": True})
+
+        try:
+            await add_message_artifact(
+                conv_id=req.conversation_id,
+                user_message_id=user_msg_id,
+                sql_text=sql,
+                columns_json=orjson.dumps(cols, default=_json_default).decode("utf-8"),
+                rows_json=orjson.dumps(rows, default=_json_default).decode("utf-8"),
+                chart_json=orjson.dumps(option, default=_json_default).decode("utf-8") if option else None,
+            )
+        except Exception:
+            pass
 
         await add_message(req.conversation_id, "assistant", f"[SQL]\n{sql}\n\n[Analysis]\n{analysis}")
 
