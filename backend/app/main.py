@@ -17,7 +17,6 @@ from backend.app.api.datasources import router as datasources_router
 from backend.app.api.export import router as export_router
 from backend.app.api.sql import router as sql_router
 from backend.app.api.audits import router as audits_router
-from backend.app.core.training import train_schema_on_startup
 from backend.app.core.sqlite_store import init_sqlite
 from backend.app.core.mysql import close_engine
 from backend.app.core.uploads import cleanup_expired_uploads
@@ -60,8 +59,6 @@ async def _startup() -> None:
     await ensure_default_datasource()
     await cleanup_expired_uploads()
     await run_schema_check()
-    # train schema index (skip if mysql not configured)
-    await train_schema_on_startup()
 
 
 @app.on_event("shutdown")
