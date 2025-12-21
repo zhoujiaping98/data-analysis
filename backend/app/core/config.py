@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     SENSITIVE_FIELD_KEYWORDS: str = "password,passwd,pwd,secret,token,phone,mobile,email,mail,idcard,id_card,ssn,credit,card,bank,account"
     SENSITIVE_MASK_KEEP_START: int = 2
     SENSITIVE_MASK_KEEP_END: int = 2
+    SCHEMA_CHECK_INTERVAL_HOURS: int = 72
 
     # MySQL resilience
     MYSQL_CONNECT_TIMEOUT_SECONDS: int = 5
@@ -101,6 +102,7 @@ class Settings(BaseSettings):
         "SLOW_QUERY_THRESHOLD_MS",
         "SENSITIVE_MASK_KEEP_START",
         "SENSITIVE_MASK_KEEP_END",
+        "SCHEMA_CHECK_INTERVAL_HOURS",
         "MYSQL_CONNECT_TIMEOUT_SECONDS",
         "MYSQL_QUERY_TIMEOUT_SECONDS",
         "MYSQL_MAX_RETRIES",

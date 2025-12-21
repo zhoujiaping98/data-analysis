@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+import orjson
 
 from fastapi import Header
 from backend.app.api.deps import get_current_user
 from backend.app.core.mysql import list_tables, preview_table
-from backend.app.core.sqlite_store import list_file_uploads
+from backend.app.core.sqlite_store import list_file_uploads, list_schema_change_logs, get_schema_snapshot
 from backend.app.core.resilience import CircuitOpenError
 from backend.app.core.uploads import cleanup_expired_uploads
 from backend.app.core.datasources import resolve_datasource
@@ -63,3 +64,38 @@ async def schema_table_preview(
         if msg.lower() == "table not found":
             raise HTTPException(status_code=404, detail=msg) from e
         raise HTTPException(status_code=400, detail=msg) from e
+
+
+@router.get("/schema/changes")
+async def schema_changes(
+    limit: int = Query(default=20, ge=1, le=100),
+    user=Depends(get_current_user),
+    x_datasource_id: str | None = Header(default=None),
+):
+    ds_id, _ = await resolve_datasource(x_datasource_id)
+    snapshot = await get_schema_snapshot(ds_id)
+    logs = await list_schema_change_logs(ds_id, limit=limit)
+    out = []
+    for log in logs:
+        try:
+            out.append(
+                {
+                    "created_at": log.get("created_at"),
+                    "added": orjson.loads(log.get("added_json") or "[]"),
+                    "removed": orjson.loads(log.get("removed_json") or "[]"),
+                    "changed": orjson.loads(log.get("changed_json") or "[]"),
+                }
+            )
+        except Exception:
+            out.append(
+                {
+                    "created_at": log.get("created_at"),
+                    "added": [],
+                    "removed": [],
+                    "changed": [],
+                }
+            )
+    return {
+        "last_checked_at": snapshot.get("checked_at") if snapshot else None,
+        "logs": out,
+    }

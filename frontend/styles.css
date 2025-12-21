@@ -572,7 +572,7 @@ textarea:focus {
   padding: 10px 14px 12px;
   border-bottom: 1px solid var(--border);
   gap: 10px;
-  max-height: 220px;
+  max-height: 235px;
   overflow: auto;
 }
 .sql-assist.open {
@@ -878,6 +878,31 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.schema-log {
+  background: rgba(255,255,255,.7);
+  border: 1px solid rgba(11, 16, 32, 0.08);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.schema-log .muted {
+  font-size: 11px;
+}
+.schema-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.schema-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 180, 255, 0.35);
+  background: rgba(0, 180, 255, 0.08);
+  font-size: 11px;
 }
 
 .table-item {

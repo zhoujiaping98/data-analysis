@@ -22,6 +22,7 @@ from backend.app.core.sqlite_store import init_sqlite
 from backend.app.core.mysql import close_engine
 from backend.app.core.uploads import cleanup_expired_uploads
 from backend.app.core.datasources import ensure_default_datasource
+from backend.app.core.schema_monitor import run_schema_check
 
 setup_logging()
 
@@ -58,6 +59,7 @@ async def _startup() -> None:
     await init_sqlite()
     await ensure_default_datasource()
     await cleanup_expired_uploads()
+    await run_schema_check()
     # train schema index (skip if mysql not configured)
     await train_schema_on_startup()
 

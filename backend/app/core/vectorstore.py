@@ -149,6 +149,15 @@ class SchemaVectorStore:
                 return
             raise
 
+    def delete_schema_docs(self, table_names: List[str]) -> None:
+        if not table_names:
+            return
+        ids = [f"table::{t}" for t in table_names if t]
+        try:
+            self._collection.delete(ids=ids)
+        except Exception as e:
+            log.warning("Failed to delete schema docs. err=%s", e)
+
     def search(self, query: str, k: int = 8) -> List[Dict[str, Any]]:
         try:
             res = self._collection.query(query_texts=[query], n_results=k)

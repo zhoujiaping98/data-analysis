@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
@@ -98,6 +99,21 @@ async def init_sqlite() -> None:
                 slow INTEGER NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS schema_snapshots (
+                datasource_id TEXT PRIMARY KEY,
+                schema_json TEXT NOT NULL,
+                checked_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS schema_change_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                datasource_id TEXT NOT NULL,
+                added_json TEXT,
+                removed_json TEXT,
+                changed_json TEXT,
+                created_at TEXT NOT NULL
+            );
             """
         )
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
@@ -123,6 +139,10 @@ async def init_sqlite() -> None:
                 cur.execute("ALTER TABLE sql_audits ADD COLUMN elapsed_ms INTEGER")
             if "slow" not in audit_cols:
                 cur.execute("ALTER TABLE sql_audits ADD COLUMN slow INTEGER NOT NULL DEFAULT 0")
+        schema_cols = {r["name"] for r in cur.execute("PRAGMA table_info(schema_snapshots)").fetchall()}
+        if schema_cols:
+            if "checked_at" not in schema_cols:
+                cur.execute("ALTER TABLE schema_snapshots ADD COLUMN checked_at TEXT")
         ds_cols = {r["name"] for r in cur.execute("PRAGMA table_info(data_sources)").fetchall()}
         if "training_ok" not in ds_cols:
             cur.execute("ALTER TABLE data_sources ADD COLUMN training_ok INTEGER")
@@ -398,6 +418,59 @@ async def list_sql_audits(username: str, limit: int = 200) -> List[Dict[str, Any
         rows = conn.execute(
             "SELECT * FROM sql_audits WHERE user_username=? ORDER BY id DESC LIMIT ?",
             (username, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+async def get_schema_snapshot(datasource_id: str) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT * FROM schema_snapshots WHERE datasource_id=?",
+            (datasource_id,),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def set_schema_snapshot(datasource_id: str, schema_json: str) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO schema_snapshots(datasource_id, schema_json, checked_at) VALUES(?,?,?) "
+            "ON CONFLICT(datasource_id) DO UPDATE SET schema_json=excluded.schema_json, checked_at=excluded.checked_at",
+            (datasource_id, schema_json, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+async def add_schema_change_log(
+    datasource_id: str,
+    added: List[str],
+    removed: List[str],
+    changed: List[str],
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO schema_change_logs(datasource_id, added_json, removed_json, changed_json, created_at) "
+            "VALUES(?,?,?,?,?)",
+            (
+                datasource_id,
+                json.dumps(added, ensure_ascii=False),
+                json.dumps(removed, ensure_ascii=False),
+                json.dumps(changed, ensure_ascii=False),
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def list_schema_change_logs(datasource_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM schema_change_logs WHERE datasource_id=? ORDER BY id DESC LIMIT ?",
+            (datasource_id, limit),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]

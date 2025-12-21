@@ -21,6 +21,7 @@ let lastSqlExplain = "";
 let lastSqlSuggest = "";
 let lastSqlSafety = "";
 let lastSqlFix = "";
+let schemaChangeExpanded = false;
 let chartConfig = {
   type: "auto",
   xField: "",
@@ -455,6 +456,9 @@ async function refreshSchemaTables() {
   if (!token) {
     listEl.innerHTML = "<div class='pad muted'>登录后可查看表列表</div>";
     previewEl.innerHTML = "<div class='pad muted'>请选择一个表进行预览</div>";
+    if (el("schemaChangeMeta")) el("schemaChangeMeta").textContent = "最近检查：-";
+    if (el("schemaChangeList")) el("schemaChangeList").innerHTML = "";
+    if (el("btnSchemaMore")) el("btnSchemaMore").style.display = "none";
     return;
   }
 
@@ -494,9 +498,66 @@ async function refreshSchemaTables() {
       listEl.appendChild(item);
     });
     previewEl.innerHTML = "<div class='pad muted'>请选择一个表进行预览</div>";
+    await refreshSchemaChanges();
+    if (el("btnSchemaMore")) el("btnSchemaMore").style.display = "";
   } catch (e) {
     listEl.innerHTML = "<div class='pad error'>加载表列表失败</div>";
     previewEl.innerHTML = "<div class='pad muted'>请检查后端日志</div>";
+    if (el("schemaChangeMeta")) el("schemaChangeMeta").textContent = "最近检查：-";
+    if (el("schemaChangeList")) el("schemaChangeList").innerHTML = "";
+    if (el("btnSchemaMore")) el("btnSchemaMore").style.display = "none";
+  }
+}
+
+async function refreshSchemaChanges() {
+  const metaEl = el("schemaChangeMeta");
+  const listEl = el("schemaChangeList");
+  if (!metaEl || !listEl) return;
+  try {
+    const limit = schemaChangeExpanded ? 20 : 1;
+    const resp = await apiFetch(`/schema/changes?limit=${limit}`);
+    const data = await resp.json();
+    metaEl.textContent = data.last_checked_at ? `最近检查：${data.last_checked_at}` : "最近检查：-";
+    const logs = data.logs || [];
+    if (logs.length === 0) {
+      listEl.innerHTML = "<div class='pad muted'>暂无结构变更记录</div>";
+      const btn = el("btnSchemaMore");
+      if (btn) btn.style.display = "none";
+      return;
+    }
+    listEl.innerHTML = "";
+    logs.forEach(l => {
+      const item = document.createElement("div");
+      item.className = "schema-log";
+      const time = document.createElement("div");
+      time.className = "muted";
+      time.textContent = l.created_at || "";
+      const tags = document.createElement("div");
+      tags.className = "schema-tags";
+      const add = (label, arr) => {
+        if (!arr || arr.length === 0) return;
+        const tag = document.createElement("div");
+        tag.className = "schema-tag";
+        tag.textContent = `${label}: ${arr.join(", ")}`;
+        tags.appendChild(tag);
+      };
+      add("新增", l.added || []);
+      add("删除", l.removed || []);
+      add("变更", l.changed || []);
+      item.appendChild(time);
+      item.appendChild(tags);
+      listEl.appendChild(item);
+    });
+    const btn = el("btnSchemaMore");
+    if (btn) {
+      btn.textContent = schemaChangeExpanded ? "收起" : "展开更多";
+      btn.style.display = logs.length <= 1 && !schemaChangeExpanded ? "none" : "";
+    }
+  } catch (e) {
+    metaEl.textContent = "最近检查：-";
+    listEl.innerHTML = "<div class='pad muted'>暂无结构变更记录</div>";
+    const btn = el("btnSchemaMore");
+    if (btn) btn.style.display = "none";
   }
 }
 
@@ -1445,6 +1506,7 @@ if (el("datasourceSelect")) el("datasourceSelect").onchange = async (e) => {
   localStorage.setItem("datasourceId", currentDatasourceId);
   await refreshSchemaTables();
   await refreshUploads();
+  await refreshSchemaChanges();
 };
 if (el("btnManageDs")) el("btnManageDs").onclick = openDsModal;
 if (el("btnCloseDsModal")) el("btnCloseDsModal").onclick = closeDsModal;
@@ -1601,6 +1663,10 @@ if (el("btnRefreshSchema")) el("btnRefreshSchema").onclick = async () => {
   await refreshSchemaTables();
   await refreshUploads();
 };
+if (el("btnSchemaMore")) el("btnSchemaMore").onclick = async () => {
+  schemaChangeExpanded = !schemaChangeExpanded;
+  await refreshSchemaChanges();
+};
 
 el("chatInput").addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendMessage();
@@ -1616,6 +1682,7 @@ el("chatInput").addEventListener("keydown", (e) => {
       await refreshDatasources();
       await refreshSchemaTables();
       await refreshUploads();
+      await refreshSchemaChanges();
       await refreshConversations();
       if (!activeConversationId) await newConversation();
       else await loadConversation(activeConversationId);
