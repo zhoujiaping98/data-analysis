@@ -571,11 +571,12 @@ textarea:focus {
   display: none;
   padding: 10px 14px 12px;
   border-bottom: 1px solid var(--border);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  max-height: 220px;
+  overflow: auto;
 }
 .sql-assist.open {
-  display: grid;
+  display: block;
 }
 .assist-item {
   background: rgba(255,255,255,.7);
@@ -587,10 +588,17 @@ textarea:focus {
   gap: 6px;
   min-height: 64px;
 }
+.assist-row {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 10px;
+  align-items: start;
+}
 .assist-text {
   font-size: 12px;
   line-height: 1.4;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .subhead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
