@@ -2171,9 +2171,11 @@ document.querySelectorAll(".drop-clear").forEach(btn => {
 if (el("btnExportChart")) el("btnExportChart").onclick = downloadChart;
 if (el("btnExportReport")) el("btnExportReport").onclick = exportHtmlReport;
 if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
-if (el("btnDrawer")) el("btnDrawer").onclick = () => toggleDrawer(true);
-if (el("btnCloseDrawer")) el("btnCloseDrawer").onclick = () => toggleDrawer(false);
-if (el("drawerOverlay")) el("drawerOverlay").onclick = () => toggleDrawer(false);
+if (el("btnDrawer")) el("btnDrawer").onclick = () => openDataModal();
+if (el("btnCloseDataModal")) el("btnCloseDataModal").onclick = () => closeDataModal();
+if (el("dataModal")) el("dataModal").addEventListener("click", (e) => {
+  if (e.target.id === "dataModal") closeDataModal();
+});
 if (el("fileInput")) el("fileInput").addEventListener("change", (e) => {
   const file = e.target.files && e.target.files[0];
   loadSheetNames(file);
@@ -2214,19 +2216,14 @@ el("chatInput").addEventListener("keydown", (e) => {
   }
 })();
 
-function toggleDrawer(open) {
-  const drawer = el("drawer");
-  const overlay = el("drawerOverlay");
-  if (!drawer || !overlay) return;
-  if (open) {
-    drawer.classList.add("open");
-    overlay.classList.add("open");
-    document.body.classList.add("drawer-open");
-  } else {
-    drawer.classList.remove("open");
-    overlay.classList.remove("open");
-    document.body.classList.remove("drawer-open");
-  }
+function openDataModal() {
+  const modal = el("dataModal");
+  if (modal) modal.classList.add("open");
+}
+
+function closeDataModal() {
+  const modal = el("dataModal");
+  if (modal) modal.classList.remove("open");
 }
 
 if (el("btnToggleSql")) el("btnToggleSql").onclick = () => {

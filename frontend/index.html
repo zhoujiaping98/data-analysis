@@ -115,39 +115,42 @@
     </section>
   </div>
 
-  <div id="drawerOverlay" class="drawer-overlay"></div>
-  <aside id="drawer" class="drawer">
-    <div class="panel-header">
-      <div class="title">数据预览</div>
-      <div class="drawer-actions">
-        <button id="btnRefreshSchema" class="ghost">刷新</button>
-        <button id="btnCloseDrawer" class="ghost">关闭</button>
+  <div id="dataModal" class="modal">
+    <div class="modal-card data-card">
+      <div class="modal-header">
+        <div class="title">数据预览</div>
+        <div class="drawer-actions">
+          <button id="btnRefreshSchema" class="ghost">刷新</button>
+          <button id="btnCloseDataModal" class="ghost">关闭</button>
+        </div>
+      </div>
+      <div class="modal-body data-body">
+        <div class="schema">
+          <div class="upload-box pad">
+            <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
+            <select id="sheetSelect" class="select-mini" disabled>
+              <option value="">Sheet</option>
+            </select>
+            <button id="btnUpload" class="btn-mini">上传</button>
+            <span id="uploadStatus" class="muted"></span>
+            <a class="sample-link" href="/sample.csv" download>示例文件下载</a>
+          </div>
+          <div id="uploadSectionTitle" class="subhead pad">已上传文件</div>
+          <div id="uploadList" class="table-list"></div>
+          <div class="subhead pad">库内表</div>
+          <div id="tableList" class="table-list"></div>
+          <div class="subhead pad">结构变更</div>
+          <div id="schemaChangeMeta" class="pad muted">最近检查：-</div>
+          <div id="schemaChangeList" class="table-list"></div>
+          <div class="pad">
+            <button id="btnSchemaMore" class="ghost">展开更多</button>
+          </div>
+          <div class="subhead pad">预览（前 10 行）</div>
+          <div id="previewWrap" class="table-wrap"></div>
+        </div>
       </div>
     </div>
-    <div class="schema">
-      <div class="upload-box pad">
-        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
-        <select id="sheetSelect" class="select-mini" disabled>
-          <option value="">Sheet</option>
-        </select>
-        <button id="btnUpload" class="btn-mini">上传</button>
-        <span id="uploadStatus" class="muted"></span>
-        <a class="sample-link" href="/sample.csv" download>示例文件下载</a>
-      </div>
-      <div id="uploadSectionTitle" class="subhead pad">已上传文件</div>
-      <div id="uploadList" class="table-list"></div>
-      <div class="subhead pad">库内表</div>
-      <div id="tableList" class="table-list"></div>
-      <div class="subhead pad">结构变更</div>
-      <div id="schemaChangeMeta" class="pad muted">最近检查：-</div>
-      <div id="schemaChangeList" class="table-list"></div>
-      <div class="pad">
-        <button id="btnSchemaMore" class="ghost">展开更多</button>
-      </div>
-      <div class="subhead pad">预览（前 10 行）</div>
-      <div id="previewWrap" class="table-wrap"></div>
-    </div>
-  </aside>
+  </div>
 
   <div id="dsModal" class="modal">
     <div class="modal-card">
@@ -402,6 +405,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=42"></script>
+  <script src="/app.js?v=43"></script>
 </body>
 </html>

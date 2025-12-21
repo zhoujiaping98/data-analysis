@@ -753,6 +753,21 @@ textarea:focus {
   background: rgba(255,255,255,.7);
   box-shadow: var(--shadow-soft);
 }
+.data-card {
+  width: min(1100px, 96vw);
+  height: 90vh;
+  max-height: 90vh;
+}
+.data-body {
+  display: block;
+  padding: 12px;
+  overflow: auto;
+  height: 100%;
+}
+.modal-body.data-body {
+  display: block;
+  grid-template-columns: none;
+}
 
 .table-wrap table { border-collapse: collapse; width: 100%; font-size: 12px; }
 .table-wrap th, .table-wrap td { border-bottom: 1px solid rgba(11, 16, 32, 0.08); padding: 8px 10px; text-align: left; }
