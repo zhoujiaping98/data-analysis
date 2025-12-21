@@ -17,6 +17,10 @@ let activeMessageId = 0;
 let lastUserMsgEl = null;
 let lastChartOption = null;
 let autoChartOption = null;
+let lastSqlExplain = "";
+let lastSqlSuggest = "";
+let lastSqlSafety = "";
+let lastSqlFix = "";
 let chartConfig = {
   type: "auto",
   xField: "",
@@ -124,6 +128,38 @@ function closeExportModal() {
   modal.classList.remove("open");
 }
 
+function setSqlAssist({ explain, suggest, safety, fix }) {
+  if (explain !== undefined) {
+    lastSqlExplain = explain || "";
+    const elx = el("sqlExplain");
+    if (elx) elx.textContent = lastSqlExplain || "-";
+  }
+  if (suggest !== undefined) {
+    lastSqlSuggest = suggest || "";
+    const els = el("sqlSuggest");
+    if (els) els.textContent = lastSqlSuggest || "-";
+  }
+  if (safety !== undefined) {
+    if (Array.isArray(safety)) lastSqlSafety = safety.join("\n");
+    else lastSqlSafety = safety || "";
+    const els = el("sqlSafety");
+    if (els) els.textContent = lastSqlSafety || "-";
+  }
+  if (fix !== undefined) {
+    lastSqlFix = fix || "";
+    const elx = el("sqlFix");
+    if (elx) elx.textContent = lastSqlFix || "-";
+  }
+}
+
+function toggleSqlAssist(forceOpen = null) {
+  const box = el("sqlAssist");
+  if (!box) return;
+  const isOpen = box.classList.contains("open");
+  const next = forceOpen === null ? !isOpen : forceOpen;
+  box.classList.toggle("open", next);
+}
+
 function openSqlModal() {
   const modal = el("sqlModal");
   if (!modal) return;
@@ -187,12 +223,25 @@ async function runSql() {
       lastAnalysisText = data.analysis;
       reportContext.analysis = data.analysis;
     }
+    setSqlAssist({
+      explain: data.explain || "",
+      suggest: data.suggest || "",
+      safety: data.safety || [],
+      fix: ""
+    });
+    if (data.slow) {
+      el("statusLine").textContent = "查询耗时较长，建议优化过滤条件";
+    }
     messageArtifacts.set(activeMessageId, {
       sql: data.sql || sql,
       columns: data.columns || [],
       rows: data.rows || [],
       chart: data.chart || null,
       analysis: data.analysis || "",
+      explain: data.explain || "",
+      suggest: data.suggest || "",
+      safety: Array.isArray(data.safety) ? data.safety.join("\n") : (data.safety || ""),
+      fix: "",
       question,
       message_id: activeMessageId
     });
@@ -752,10 +801,17 @@ async function loadConversation(convId) {
   el("tableWrap").innerHTML = "";
   el("statusLine").textContent = "";
   el("chartHint").textContent = "";
+  setSqlAssist({ explain: "", suggest: "", safety: "", fix: "" });
+  toggleSqlAssist(false);
   analysisStreaming = "";
   analysisMsgBodyEl = null;
   lastAnalysisText = "";
   lastUserQuestion = "";
+  lastSqlExplain = "";
+  lastSqlSuggest = "";
+  lastSqlSafety = "";
+  lastSqlFix = "";
+  setSqlAssist({ explain: "", suggest: "", safety: "", fix: "" });
   messageArtifacts.clear();
   messageIdToQuestion.clear();
   activeMessageId = 0;
@@ -1258,8 +1314,19 @@ async function sendMessage() {
       }
     } else if (eventName === "status") {
       el("statusLine").textContent = "阶段: " + data.stage;
+    } else if (eventName === "warning") {
+      el("statusLine").textContent = data.message || "查询耗时较长";
     } else if (eventName === "sql") {
       el("sqlBox").textContent = data.sql || "";
+      setSqlAssist({ explain: "", suggest: "", safety: "", fix: "" });
+    } else if (eventName === "sql_explain") {
+      setSqlAssist({ explain: data.text || "" });
+    } else if (eventName === "sql_suggest") {
+      setSqlAssist({ suggest: data.text || "" });
+    } else if (eventName === "sql_safety") {
+      setSqlAssist({ safety: data.tips || [] });
+    } else if (eventName === "sql_fix") {
+      setSqlAssist({ fix: data.text || "" });
     } else if (eventName === "table") {
       renderTable(data.columns, data.rows);
     } else if (eventName === "chart") {
@@ -1305,6 +1372,10 @@ async function sendMessage() {
               rows: lastTableRows || [],
               chart: lastChartOption,
               analysis: text,
+              explain: lastSqlExplain,
+              suggest: lastSqlSuggest,
+              safety: lastSqlSafety,
+              fix: lastSqlFix,
               question: lastUserQuestion || "",
               message_id: activeMessageId
             });
@@ -1320,6 +1391,10 @@ async function sendMessage() {
               rows: lastTableRows || [],
               chart: lastChartOption,
               analysis: text,
+              explain: lastSqlExplain,
+              suggest: lastSqlSuggest,
+              safety: lastSqlSafety,
+              fix: lastSqlFix,
               question: lastUserQuestion || "",
               message_id: activeMessageId
             });
@@ -1572,7 +1647,9 @@ if (el("btnToggleSql")) el("btnToggleSql").onclick = () => {
   if (!box) return;
   box.classList.toggle("collapsed");
   const btn = el("btnToggleSql");
-  if (btn) btn.textContent = box.classList.contains("collapsed") ? "展开" : "收起";
+  const isCollapsed = box.classList.contains("collapsed");
+  if (btn) btn.textContent = isCollapsed ? "展开" : "收起";
+  toggleSqlAssist(!isCollapsed);
 };
 
 function showArtifact(artifact) {
@@ -1585,6 +1662,12 @@ function showArtifact(artifact) {
   if (artifact.message_id) activeMessageId = artifact.message_id;
   reportContext.question = artifact.question || lastUserQuestion || "";
   reportContext.analysis = artifact.analysis || "";
+  setSqlAssist({
+    explain: artifact.explain || "",
+    suggest: artifact.suggest || "",
+    safety: artifact.safety || "",
+    fix: artifact.fix || ""
+  });
   if (artifact.message_id && artifact.question) {
     messageIdToQuestion.set(artifact.message_id, artifact.question);
   }

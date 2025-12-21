@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
+import time
 import orjson
 from typing import AsyncGenerator, Dict, Any
 
@@ -19,16 +20,24 @@ from backend.app.core.sqlite_store import (
     upsert_conversation,
     get_messages,
     get_conversation,
+    add_sql_audit,
 )
 from backend.app.core.mysql import run_sql, extract_table_names, list_tables
 from backend.app.services.schema_context import build_schema_context
 from backend.app.services.sql_generator import generate_sql
 from backend.app.services.charting import suggest_echarts_option
 from backend.app.services.analyzer import analyze_stream
+from backend.app.services.sql_assistant import (
+    explain_sql,
+    suggest_sql_improvement,
+    suggest_sql_fix,
+    generate_safety_tips,
+)
 from backend.app.core.resilience import CircuitOpenError
 from backend.app.core.sqlite_store import list_file_uploads
 from backend.app.core.datasources import resolve_datasource
 from backend.app.core.uploads import cleanup_expired_uploads
+from backend.app.core.audit import mask_sensitive_rows
 
 router = APIRouter()
 log = logging.getLogger("chat")
@@ -83,6 +92,9 @@ async def chat_sse(
             yield sse_event("done", {"ok": False, "request_id": request_id})
             return
         yield sse_event("sql", {"sql": sql, "request_id": request_id})
+        explain_text = await explain_sql(sql)
+        if explain_text:
+            yield sse_event("sql_explain", {"text": explain_text, "request_id": request_id})
 
         # Enforce table allowlist (base tables + user uploads) to avoid cross-schema access.
         try:
@@ -99,6 +111,7 @@ async def chat_sse(
         cols = []
         rows = []
         last_err: str | None = None
+        elapsed_ms = None
         for attempt in range(settings.MAX_SQL_RETRY + 1):
             try:
                 used_tables = set(extract_table_names(sql))
@@ -115,7 +128,9 @@ async def chat_sse(
                     )
                     break
                 yield sse_event("status", {"stage": "sql_execution", "attempt": attempt, "request_id": request_id})
+                t0 = time.perf_counter()
                 cols, rows = await run_sql(sql, max_rows=settings.MAX_ROWS, config=ds_cfg, cache_key=ds_id)
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
                 last_err = None
                 break
             except CircuitOpenError as e:
@@ -142,10 +157,45 @@ async def chat_sse(
                 yield sse_event("sql", {"sql": sql, "request_id": request_id, "note": "retry_rewrite"})
 
         if last_err is not None:
+            fix_text = await suggest_sql_fix(sql, last_err)
+            if fix_text:
+                yield sse_event("sql_fix", {"text": fix_text, "request_id": request_id})
+            else:
+                yield sse_event("sql_fix", {"text": "无法自动修复，请检查 SQL 或调整问题描述。", "request_id": request_id})
+            try:
+                await add_sql_audit(
+                    user_username=user["username"],
+                    conversation_id=req.conversation_id,
+                    message_id=user_msg_id,
+                    datasource_id=ds_id,
+                    sql_text=sql,
+                    row_count=None,
+                    elapsed_ms=elapsed_ms,
+                    success=False,
+                    error_message=last_err,
+                    slow=False,
+                )
+            except Exception:
+                pass
             yield sse_event("done", {"ok": False, "request_id": request_id})
             return
 
+        cols, rows = mask_sensitive_rows(
+            cols,
+            rows,
+            keep_start=settings.SENSITIVE_MASK_KEEP_START,
+            keep_end=settings.SENSITIVE_MASK_KEEP_END,
+        )
         yield sse_event("table", {"columns": cols, "rows": rows, "request_id": request_id, "row_count": len(rows)})
+        slow = bool(elapsed_ms is not None and elapsed_ms >= settings.SLOW_QUERY_THRESHOLD_MS)
+        if slow:
+            yield sse_event(
+                "warning",
+                {"message": "本次查询耗时较长，建议增加过滤条件或限制返回行数。", "elapsed_ms": elapsed_ms},
+            )
+        safety_tips = generate_safety_tips(sql, len(rows), elapsed_ms)
+        if safety_tips:
+            yield sse_event("sql_safety", {"tips": safety_tips, "request_id": request_id})
 
         yield sse_event("status", {"stage": "chart_generation", "request_id": request_id})
         option = suggest_echarts_option(cols, rows)
@@ -162,6 +212,10 @@ async def chat_sse(
         analysis = "".join(analysis_parts).strip()
         yield sse_event("analysis", {"text": analysis, "request_id": request_id, "done": True})
 
+        suggest_text = await suggest_sql_improvement(req.message, sql, len(rows), elapsed_ms)
+        if suggest_text:
+            yield sse_event("sql_suggest", {"text": suggest_text, "request_id": request_id})
+
         try:
             await add_message_artifact(
                 conv_id=req.conversation_id,
@@ -171,6 +225,26 @@ async def chat_sse(
                 rows_json=orjson.dumps(rows, default=_json_default).decode("utf-8"),
                 chart_json=orjson.dumps(option, default=_json_default).decode("utf-8") if option else None,
                 analysis_text=analysis,
+                explain_text=explain_text,
+                suggest_text=suggest_text,
+                safety_text="\n".join(safety_tips) if safety_tips else None,
+                fix_text=None,
+            )
+        except Exception:
+            pass
+
+        try:
+            await add_sql_audit(
+                user_username=user["username"],
+                conversation_id=req.conversation_id,
+                message_id=user_msg_id,
+                datasource_id=ds_id,
+                sql_text=sql,
+                row_count=len(rows),
+                elapsed_ms=elapsed_ms,
+                success=True,
+                error_message=None,
+                slow=slow,
             )
         except Exception:
             pass

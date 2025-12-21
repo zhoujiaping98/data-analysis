@@ -65,6 +65,10 @@ async def init_sqlite() -> None:
                 rows_json TEXT NOT NULL,
                 chart_json TEXT,
                 analysis_text TEXT,
+                explain_text TEXT,
+                suggest_text TEXT,
+                safety_text TEXT,
+                fix_text TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -79,6 +83,21 @@ async def init_sqlite() -> None:
                 last_trained_at TEXT,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS sql_audits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_username TEXT NOT NULL,
+                conversation_id TEXT,
+                message_id INTEGER,
+                datasource_id TEXT,
+                sql_text TEXT NOT NULL,
+                row_count INTEGER,
+                elapsed_ms INTEGER,
+                success INTEGER NOT NULL,
+                error_message TEXT,
+                slow INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
@@ -90,6 +109,20 @@ async def init_sqlite() -> None:
         artifact_cols = {r["name"] for r in cur.execute("PRAGMA table_info(message_artifacts)").fetchall()}
         if "analysis_text" not in artifact_cols:
             cur.execute("ALTER TABLE message_artifacts ADD COLUMN analysis_text TEXT")
+        if "explain_text" not in artifact_cols:
+            cur.execute("ALTER TABLE message_artifacts ADD COLUMN explain_text TEXT")
+        if "suggest_text" not in artifact_cols:
+            cur.execute("ALTER TABLE message_artifacts ADD COLUMN suggest_text TEXT")
+        if "safety_text" not in artifact_cols:
+            cur.execute("ALTER TABLE message_artifacts ADD COLUMN safety_text TEXT")
+        if "fix_text" not in artifact_cols:
+            cur.execute("ALTER TABLE message_artifacts ADD COLUMN fix_text TEXT")
+        audit_cols = {r["name"] for r in cur.execute("PRAGMA table_info(sql_audits)").fetchall()}
+        if audit_cols:
+            if "elapsed_ms" not in audit_cols:
+                cur.execute("ALTER TABLE sql_audits ADD COLUMN elapsed_ms INTEGER")
+            if "slow" not in audit_cols:
+                cur.execute("ALTER TABLE sql_audits ADD COLUMN slow INTEGER NOT NULL DEFAULT 0")
         ds_cols = {r["name"] for r in cur.execute("PRAGMA table_info(data_sources)").fetchall()}
         if "training_ok" not in ds_cols:
             cur.execute("ALTER TABLE data_sources ADD COLUMN training_ok INTEGER")
@@ -286,12 +319,16 @@ async def add_message_artifact(
     rows_json: str,
     chart_json: str | None,
     analysis_text: str | None,
+    explain_text: str | None = None,
+    suggest_text: str | None = None,
+    safety_text: str | None = None,
+    fix_text: str | None = None,
 ) -> None:
     async with _lock:
         conn = _connect()
         conn.execute(
-            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, analysis_text, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO message_artifacts(conversation_id, user_message_id, sql_text, columns_json, rows_json, chart_json, analysis_text, explain_text, suggest_text, safety_text, fix_text, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 conv_id,
                 user_message_id,
@@ -300,6 +337,10 @@ async def add_message_artifact(
                 rows_json,
                 chart_json,
                 analysis_text,
+                explain_text,
+                suggest_text,
+                safety_text,
+                fix_text,
                 datetime.utcnow().isoformat(),
             ),
         )
@@ -315,6 +356,51 @@ async def get_message_artifact(conv_id: str, user_message_id: int) -> Optional[D
         ).fetchone()
         conn.close()
         return dict(row) if row else None
+
+async def add_sql_audit(
+    *,
+    user_username: str,
+    conversation_id: str | None,
+    message_id: int | None,
+    datasource_id: str | None,
+    sql_text: str,
+    row_count: int | None,
+    elapsed_ms: int | None,
+    success: bool,
+    error_message: str | None,
+    slow: bool,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO sql_audits(user_username, conversation_id, message_id, datasource_id, sql_text, row_count, elapsed_ms, success, error_message, slow, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                user_username,
+                conversation_id,
+                message_id,
+                datasource_id,
+                sql_text,
+                row_count,
+                elapsed_ms,
+                1 if success else 0,
+                error_message,
+                1 if slow else 0,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def list_sql_audits(username: str, limit: int = 200) -> List[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM sql_audits WHERE user_username=? ORDER BY id DESC LIMIT ?",
+            (username, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
 async def add_datasource(
     ds_id: str,

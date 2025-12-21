@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 import orjson
 from typing import Any
 
@@ -14,11 +15,18 @@ from backend.app.core.sqlite_store import (
     get_conversation,
     get_message_by_id,
     list_file_uploads,
+    add_sql_audit,
 )
 from backend.app.core.mysql import run_sql, extract_table_names, list_tables
 from backend.app.core.datasources import resolve_datasource
 from backend.app.services.charting import suggest_echarts_option
 from backend.app.services.analyzer import analyze_stream
+from backend.app.core.audit import mask_sensitive_rows
+from backend.app.services.sql_assistant import (
+    explain_sql,
+    suggest_sql_improvement,
+    generate_safety_tips,
+)
 
 router = APIRouter()
 
@@ -68,12 +76,54 @@ async def execute_sql(
         )
 
     try:
+        t0 = time.perf_counter()
         cols, rows = await run_sql(sql, max_rows=settings.MAX_ROWS, config=ds_cfg, cache_key=ds_id)
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
     except ValueError as e:
+        try:
+            await add_sql_audit(
+                user_username=user["username"],
+                conversation_id=req.conversation_id,
+                message_id=req.message_id,
+                datasource_id=ds_id,
+                sql_text=sql,
+                row_count=None,
+                elapsed_ms=None,
+                success=False,
+                error_message=str(e),
+                slow=False,
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        try:
+            await add_sql_audit(
+                user_username=user["username"],
+                conversation_id=req.conversation_id,
+                message_id=req.message_id,
+                datasource_id=ds_id,
+                sql_text=sql,
+                row_count=None,
+                elapsed_ms=None,
+                success=False,
+                error_message=str(e),
+                slow=False,
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
     option = suggest_echarts_option(cols, rows)
+    explain_text = await explain_sql(sql)
+
+    cols, rows = mask_sensitive_rows(
+        cols,
+        rows,
+        keep_start=settings.SENSITIVE_MASK_KEEP_START,
+        keep_end=settings.SENSITIVE_MASK_KEEP_END,
+    )
+    slow = bool(elapsed_ms is not None and elapsed_ms >= settings.SLOW_QUERY_THRESHOLD_MS)
+    safety_tips = generate_safety_tips(sql, len(rows), elapsed_ms)
 
     analysis = ""
     if req.with_analysis:
@@ -84,6 +134,8 @@ async def execute_sql(
             analysis_parts.append(chunk)
         analysis = "".join(analysis_parts).strip()
 
+    suggest_text = await suggest_sql_improvement(msg.get("content") or "", sql, len(rows), elapsed_ms)
+
     try:
         await add_message_artifact(
             conv_id=req.conversation_id,
@@ -93,6 +145,26 @@ async def execute_sql(
             rows_json=orjson.dumps(rows, default=_json_default).decode("utf-8"),
             chart_json=orjson.dumps(option, default=_json_default).decode("utf-8") if option else None,
             analysis_text=analysis,
+            explain_text=explain_text,
+            suggest_text=suggest_text,
+            safety_text="\n".join(safety_tips) if safety_tips else None,
+            fix_text=None,
+        )
+    except Exception:
+        pass
+
+    try:
+        await add_sql_audit(
+            user_username=user["username"],
+            conversation_id=req.conversation_id,
+            message_id=req.message_id,
+            datasource_id=ds_id,
+            sql_text=sql,
+            row_count=len(rows),
+            elapsed_ms=elapsed_ms,
+            success=True,
+            error_message=None,
+            slow=slow,
         )
     except Exception:
         pass
@@ -103,4 +175,9 @@ async def execute_sql(
         "rows": rows,
         "chart": option,
         "analysis": analysis,
+        "elapsed_ms": elapsed_ms,
+        "slow": slow,
+        "explain": explain_text,
+        "suggest": suggest_text,
+        "safety": safety_tips,
     }

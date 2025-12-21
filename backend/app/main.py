@@ -16,6 +16,7 @@ from backend.app.api.files import router as files_router
 from backend.app.api.datasources import router as datasources_router
 from backend.app.api.export import router as export_router
 from backend.app.api.sql import router as sql_router
+from backend.app.api.audits import router as audits_router
 from backend.app.core.training import train_schema_on_startup
 from backend.app.core.sqlite_store import init_sqlite
 from backend.app.core.mysql import close_engine
@@ -45,6 +46,7 @@ app.include_router(files_router, prefix="/api")
 app.include_router(datasources_router, prefix="/api")
 app.include_router(export_router, prefix="/api")
 app.include_router(sql_router, prefix="/api")
+app.include_router(audits_router, prefix="/api")
 
 # Serve frontend
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))

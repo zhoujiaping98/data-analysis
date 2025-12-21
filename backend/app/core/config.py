@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # limits
     MAX_ROWS: int = 500
     MAX_SQL_RETRY: int = 2
+    SLOW_QUERY_THRESHOLD_MS: int = 2000
+
+    # governance
+    SENSITIVE_FIELD_KEYWORDS: str = "password,passwd,pwd,secret,token,phone,mobile,email,mail,idcard,id_card,ssn,credit,card,bank,account"
+    SENSITIVE_MASK_KEEP_START: int = 2
+    SENSITIVE_MASK_KEEP_END: int = 2
 
     # MySQL resilience
     MYSQL_CONNECT_TIMEOUT_SECONDS: int = 5
@@ -92,6 +98,9 @@ class Settings(BaseSettings):
         "EMBED_CB_RECOVERY_SECONDS",
         "MAX_ROWS",
         "MAX_SQL_RETRY",
+        "SLOW_QUERY_THRESHOLD_MS",
+        "SENSITIVE_MASK_KEEP_START",
+        "SENSITIVE_MASK_KEEP_END",
         "MYSQL_CONNECT_TIMEOUT_SECONDS",
         "MYSQL_QUERY_TIMEOUT_SECONDS",
         "MYSQL_MAX_RETRIES",
@@ -111,6 +120,11 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_float_comments(cls, v: Any) -> Any:
         return cls._strip_inline_comment(v)
+
+    @property
+    def sensitive_field_keywords(self) -> list[str]:
+        raw = self.SENSITIVE_FIELD_KEYWORDS or ""
+        return [s.strip().lower() for s in raw.split(",") if s.strip()]
 
     @property
     def mysql_dsn(self) -> str:

@@ -567,6 +567,31 @@ textarea:focus {
 .sql-box.collapsed {
   padding-bottom: 6px;
 }
+.sql-assist {
+  display: none;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--border);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.sql-assist.open {
+  display: grid;
+}
+.assist-item {
+  background: rgba(255,255,255,.7);
+  border: 1px solid rgba(11, 16, 32, 0.08);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 64px;
+}
+.assist-text {
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
 
 .subhead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 .code {
