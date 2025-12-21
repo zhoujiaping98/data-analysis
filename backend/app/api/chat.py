@@ -57,6 +57,7 @@ async def chat_sse(
         # Ensure conversation exists
         await upsert_conversation(req.conversation_id, owner_username=user["username"])
         user_msg_id = await add_message(req.conversation_id, "user", req.message)
+        yield sse_event("message", {"user_message_id": user_msg_id, "request_id": request_id})
         conv = await get_conversation(req.conversation_id)
         existing_title = (conv.get("title") or "").strip() if conv else ""
         if conv and (not existing_title or existing_title in {"New Conversation", "新会话"}):

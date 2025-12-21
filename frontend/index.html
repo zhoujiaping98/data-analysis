@@ -61,7 +61,10 @@
       <div class="sql-box collapsed">
         <div class="sql-header">
           <div class="subhead">生成的 SQL</div>
-          <button id="btnToggleSql" class="ghost">展开</button>
+          <div class="sql-actions">
+            <button id="btnEditSql" class="ghost">编辑 SQL</button>
+            <button id="btnToggleSql" class="ghost">展开</button>
+          </div>
         </div>
         <pre id="sqlBox" class="code"></pre>
       </div>
@@ -211,6 +214,22 @@
     </div>
   </div>
 
-  <script src="/app.js?v=29"></script>
+  <div id="sqlModal" class="modal">
+    <div class="modal-card sql-card">
+      <div class="modal-header">
+        <div class="title">编辑 SQL</div>
+        <button id="btnCloseSqlModal" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body sql-body">
+        <textarea id="sqlEditor" rows="10" placeholder="仅支持 SELECT/WITH 查询"></textarea>
+        <div class="sql-run">
+          <div id="sqlEditStatus" class="muted"></div>
+          <button id="btnRunSql" class="btn-mini">执行 SQL</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=30"></script>
 </body>
 </html>

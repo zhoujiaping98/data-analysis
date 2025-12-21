@@ -268,6 +268,16 @@ async def get_messages(conv_id: str, limit: int = 30) -> List[Dict[str, Any]]:
         # reverse to chronological
         return [dict(r) for r in reversed(rows)]
 
+async def get_message_by_id(message_id: int) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT id, conversation_id, role, content, created_at FROM messages WHERE id=?",
+            (message_id,),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
 async def add_message_artifact(
     conv_id: str,
     user_message_id: int,

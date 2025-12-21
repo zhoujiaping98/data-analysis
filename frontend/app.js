@@ -12,6 +12,10 @@ let lastUserQuestion = "";
 let reportContext = { question: "", analysis: "" };
 let tableModalState = { query: "", page: 1, pageSize: 50 };
 const messageArtifacts = new Map();
+const messageIdToQuestion = new Map();
+let activeMessageId = 0;
+let lastUserMsgEl = null;
+let lastChartOption = null;
 
 let lastTableColumns = [];
 let lastTableRows = [];
@@ -107,6 +111,87 @@ function closeExportModal() {
   const modal = el("exportModal");
   if (!modal) return;
   modal.classList.remove("open");
+}
+
+function openSqlModal() {
+  const modal = el("sqlModal");
+  if (!modal) return;
+  const editor = el("sqlEditor");
+  if (editor) editor.value = el("sqlBox")?.textContent || "";
+  const status = el("sqlEditStatus");
+  if (status) status.textContent = "";
+  modal.classList.add("open");
+}
+
+function closeSqlModal() {
+  const modal = el("sqlModal");
+  if (!modal) return;
+  modal.classList.remove("open");
+}
+
+async function runSql() {
+  const editor = el("sqlEditor");
+  const status = el("sqlEditStatus");
+  const sql = (editor?.value || "").trim();
+  if (!sql) {
+    if (status) status.textContent = "请输入 SQL";
+    return;
+  }
+  if (!activeConversationId || !activeMessageId) {
+    if (status) status.textContent = "当前问题未就绪";
+    return;
+  }
+  if (status) status.textContent = "执行中...";
+  try {
+    const resp = await apiFetch("/sql/execute", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        conversation_id: activeConversationId,
+        message_id: activeMessageId,
+        sql,
+        with_analysis: true
+      })
+    });
+    const data = await resp.json();
+    el("sqlBox").textContent = data.sql || sql;
+    renderTable(data.columns || [], data.rows || []);
+    if (!chart) chart = echarts.init(el("chart"));
+    chart.clear();
+    if (data.chart) {
+      lastChartOption = data.chart;
+      chart.setOption(data.chart);
+      el("chartHint").textContent = "";
+    } else {
+      lastChartOption = null;
+      el("chartHint").textContent = "该问题未生成图表";
+    }
+    const question = messageIdToQuestion.get(activeMessageId) || lastUserQuestion || "";
+    if (activeMessageId && question) messageIdToQuestion.set(activeMessageId, question);
+    reportContext.question = question;
+    if (data.analysis) {
+      addChatMessage("assistant", data.analysis);
+      lastAnalysisText = data.analysis;
+      reportContext.analysis = data.analysis;
+    }
+    messageArtifacts.set(activeMessageId, {
+      sql: data.sql || sql,
+      columns: data.columns || [],
+      rows: data.rows || [],
+      chart: data.chart || null,
+      analysis: data.analysis || "",
+      question,
+      message_id: activeMessageId
+    });
+    if (status) status.textContent = "执行完成";
+  } catch (e) {
+    let msg = e?.message || String(e);
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed && parsed.detail) msg = parsed.detail;
+    } catch (_) {}
+    if (status) status.textContent = `执行失败：${msg}`;
+  }
 }
 
 function updateExportHint() {
@@ -618,10 +703,24 @@ function addChatMessage(role, content, options = {}) {
   b.textContent = content;
   m.appendChild(r);
   m.appendChild(b);
+  if (role === "user") {
+    lastUserMsgEl = m;
+    if (options.messageId) m.dataset.messageId = String(options.messageId);
+  }
   if (options.artifact && role === "user") {
+    if (options.messageId) messageArtifacts.set(options.messageId, options.artifact);
     m.classList.add("clickable");
     m.title = "点击回放 SQL/结果/图表";
-    m.addEventListener("click", () => showArtifact(options.artifact));
+    m.addEventListener("click", () => {
+      const mid = Number(m.dataset.messageId || options.artifact.message_id || 0);
+      if (mid && messageArtifacts.has(mid)) {
+        const latest = messageArtifacts.get(mid);
+        const question = messageIdToQuestion.get(mid) || options.artifact.question || "";
+        showArtifact({ ...latest, question, message_id: mid });
+        return;
+      }
+      showArtifact(options.artifact);
+    });
   }
   box.appendChild(m);
   box.scrollTop = box.scrollHeight;
@@ -645,6 +744,10 @@ async function loadConversation(convId) {
   lastAnalysisText = "";
   lastUserQuestion = "";
   messageArtifacts.clear();
+  messageIdToQuestion.clear();
+  activeMessageId = 0;
+  lastUserMsgEl = null;
+  lastChartOption = null;
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
 
@@ -652,16 +755,20 @@ async function loadConversation(convId) {
   const msgs = await resp.json();
   let latestUser = null;
   msgs.forEach(m => {
+    if (m.role === "user") {
+      messageIdToQuestion.set(m.id, m.content || "");
+    }
     if (m.role === "user" && m.artifact) {
       messageArtifacts.set(m.id, m.artifact);
-      addChatMessage(m.role, m.content, { artifact: { ...m.artifact, question: m.content } });
+      addChatMessage(m.role, m.content, { messageId: m.id, artifact: { ...m.artifact, question: m.content, message_id: m.id } });
       latestUser = m;
     } else {
-      addChatMessage(m.role, m.content);
+      addChatMessage(m.role, m.content, m.role === "user" ? { messageId: m.id } : {});
       if (m.role === "user") latestUser = m;
     }
   });
   if (latestUser) {
+    activeMessageId = latestUser.id || 0;
     lastUserQuestion = latestUser.content || "";
     if (latestUser.artifact && latestUser.artifact.analysis) {
       lastAnalysisText = latestUser.artifact.analysis;
@@ -734,7 +841,13 @@ async function sendMessage() {
   let buffer = "";
 
   const onEvent = (eventName, data) => {
-    if (eventName === "status") {
+    if (eventName === "message") {
+      activeMessageId = data.user_message_id || 0;
+      if (activeMessageId) {
+        messageIdToQuestion.set(activeMessageId, lastUserQuestion || "");
+        if (lastUserMsgEl) lastUserMsgEl.dataset.messageId = String(activeMessageId);
+      }
+    } else if (eventName === "status") {
       el("statusLine").textContent = "阶段: " + data.stage;
     } else if (eventName === "sql") {
       el("sqlBox").textContent = data.sql || "";
@@ -744,9 +857,11 @@ async function sendMessage() {
       if (!chart) chart = echarts.init(el("chart"));
       chart.clear();
       if (data.echarts_option) {
+        lastChartOption = data.echarts_option;
         chart.setOption(data.echarts_option);
         el("chartHint").textContent = "";
       } else {
+        lastChartOption = null;
         el("chartHint").textContent = "无法从该结果自动推断合适的图表（你可以调整 SQL 让结果更适合可视化，例如：维度列 + 数值列）。";
       }
     } else if (eventName === "analysis") {
@@ -764,10 +879,32 @@ async function sendMessage() {
           analysisStreaming = "";
           lastAnalysisText = text;
           reportContext.analysis = text;
+          if (activeMessageId) {
+            messageArtifacts.set(activeMessageId, {
+              sql: el("sqlBox").textContent || "",
+              columns: lastTableColumns || [],
+              rows: lastTableRows || [],
+              chart: lastChartOption,
+              analysis: text,
+              question: lastUserQuestion || "",
+              message_id: activeMessageId
+            });
+          }
         } else if (text) {
           addChatMessage("assistant", text);
           lastAnalysisText = text;
           reportContext.analysis = text;
+          if (activeMessageId) {
+            messageArtifacts.set(activeMessageId, {
+              sql: el("sqlBox").textContent || "",
+              columns: lastTableColumns || [],
+              rows: lastTableRows || [],
+              chart: lastChartOption,
+              analysis: text,
+              question: lastUserQuestion || "",
+              message_id: activeMessageId
+            });
+          }
         }
       }
     } else if (eventName === "error") {
@@ -828,6 +965,15 @@ if (el("btnExportOptions")) el("btnExportOptions").onclick = openExportModal;
 if (el("btnCloseExport")) el("btnCloseExport").onclick = closeExportModal;
 if (el("exportModal")) el("exportModal").addEventListener("click", (e) => {
   if (e.target.id === "exportModal") closeExportModal();
+});
+if (el("btnEditSql")) el("btnEditSql").onclick = openSqlModal;
+if (el("btnCloseSqlModal")) el("btnCloseSqlModal").onclick = closeSqlModal;
+if (el("sqlModal")) el("sqlModal").addEventListener("click", (e) => {
+  if (e.target.id === "sqlModal") closeSqlModal();
+});
+if (el("btnRunSql")) el("btnRunSql").onclick = runSql;
+if (el("sqlEditor")) el("sqlEditor").addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") runSql();
 });
 if (el("exportRange")) el("exportRange").onchange = updateExportHint;
 if (el("btnExportXlsxModal")) el("btnExportXlsxModal").onclick = () => downloadXlsx(lastTableColumns, getExportRows(el("exportRange").value), getExportFilename(".xlsx"));
@@ -932,14 +1078,20 @@ function showArtifact(artifact) {
   renderTable(artifact.columns || [], artifact.rows || []);
   if (!chart) chart = echarts.init(el("chart"));
   chart.clear();
+  if (artifact.message_id) activeMessageId = artifact.message_id;
   reportContext.question = artifact.question || lastUserQuestion || "";
   reportContext.analysis = artifact.analysis || "";
+  if (artifact.message_id && artifact.question) {
+    messageIdToQuestion.set(artifact.message_id, artifact.question);
+  }
   if (artifact.question) lastUserQuestion = artifact.question;
   if (artifact.analysis) lastAnalysisText = artifact.analysis;
   if (artifact.chart) {
+    lastChartOption = artifact.chart;
     chart.setOption(artifact.chart);
     el("chartHint").textContent = "";
   } else {
+    lastChartOption = null;
     el("chartHint").textContent = "该问题未生成图表";
   }
 }

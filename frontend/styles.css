@@ -195,6 +195,35 @@ body::before {
   padding: 16px;
   overflow: hidden;
 }
+.modal-body.sql-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: hidden;
+}
+.sql-card {
+  width: min(980px, 96vw);
+  max-height: 85vh;
+}
+#sqlEditor {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 14px;
+  border: 1px solid rgba(11, 16, 32, 0.2);
+  background: rgba(255,255,255,.9);
+  color: var(--text);
+  padding: 12px 14px;
+  line-height: 1.5;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  resize: vertical;
+}
+.sql-run {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 .modal-left, .modal-right {
   min-width: 0;
   display: flex;
@@ -527,6 +556,10 @@ textarea:focus {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+.sql-actions {
+  display: flex;
+  gap: 8px;
 }
 .sql-box.collapsed .code {
   display: none;
