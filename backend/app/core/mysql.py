@@ -15,8 +15,8 @@ from backend.app.core.resilience import CircuitBreaker, async_retry
 
 log = logging.getLogger("mysql")
 
-_engine: AsyncEngine | None = None
-_sync_engine = None
+_engine_cache: Dict[str, AsyncEngine] = {}
+_sync_engine_cache: Dict[str, Any] = {}
 _IDENT = re.compile(r"^[A-Za-z0-9_]+$")
 _mysql_breaker = CircuitBreaker(
     "mysql",
@@ -24,42 +24,67 @@ _mysql_breaker = CircuitBreaker(
     recovery_timeout_s=settings.MYSQL_CB_RECOVERY_SECONDS,
 )
 
-def _get_engine() -> AsyncEngine:
-    global _engine
-    if _engine is None:
-        if not settings.has_mysql_config:
-            raise RuntimeError("MySQL config missing")
-        _engine = create_async_engine(
-            settings.mysql_dsn,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS},
-        )
-    return _engine
+def _normalize_config(config: Dict[str, Any] | None) -> Dict[str, Any]:
+    if config is not None:
+        return config
+    if not settings.has_mysql_config:
+        raise RuntimeError("MySQL config missing")
+    return {
+        "host": settings.MYSQL_HOST,
+        "port": settings.MYSQL_PORT,
+        "database": settings.MYSQL_DATABASE,
+        "user": settings.MYSQL_USER,
+        "password": settings.MYSQL_PASSWORD,
+    }
 
-def _get_sync_engine():
-    global _sync_engine
-    if _sync_engine is None:
-        if not settings.has_mysql_config:
-            raise RuntimeError("MySQL config missing")
-        sync_dsn = settings.mysql_dsn.replace("mysql+aiomysql", "mysql+pymysql")
-        _sync_engine = create_engine(
-            sync_dsn,
+
+def _dsn_from_config(config: Dict[str, Any], async_driver: bool) -> str:
+    prefix = "mysql+aiomysql" if async_driver else "mysql+pymysql"
+    return (
+        f"{prefix}://{config['user']}:{config['password']}"
+        f"@{config['host']}:{config['port']}/{config['database']}"
+    )
+
+
+def _get_engine(config: Dict[str, Any] | None, cache_key: str) -> AsyncEngine:
+    cfg = _normalize_config(config)
+    key = cache_key or "default"
+    if key not in _engine_cache:
+        dsn = _dsn_from_config(cfg, True)
+        _engine_cache[key] = create_async_engine(
+            dsn,
             pool_pre_ping=True,
+            pool_size=settings.MYSQL_POOL_SIZE,
+            max_overflow=settings.MYSQL_MAX_OVERFLOW,
+            pool_recycle=settings.MYSQL_POOL_RECYCLE_SECONDS,
             connect_args={"connect_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS},
         )
-    return _sync_engine
+    return _engine_cache[key]
+
+
+def _get_sync_engine(config: Dict[str, Any] | None, cache_key: str):
+    cfg = _normalize_config(config)
+    key = cache_key or "default"
+    if key not in _sync_engine_cache:
+        dsn = _dsn_from_config(cfg, False)
+        _sync_engine_cache[key] = create_engine(
+            dsn,
+            pool_pre_ping=True,
+            pool_size=settings.MYSQL_POOL_SIZE,
+            max_overflow=settings.MYSQL_MAX_OVERFLOW,
+            pool_recycle=settings.MYSQL_POOL_RECYCLE_SECONDS,
+            connect_args={"connect_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS},
+        )
+    return _sync_engine_cache[key]
 
 
 async def close_engine() -> None:
-    global _engine
-    if _engine is None:
-        return
-    await _engine.dispose()
-    _engine = None
-    global _sync_engine
-    if _sync_engine is not None:
-        _sync_engine.dispose()
-        _sync_engine = None
+    for eng in list(_engine_cache.values()):
+        await eng.dispose()
+    _engine_cache.clear()
+    for eng in list(_sync_engine_cache.values()):
+        eng.dispose()
+    _sync_engine_cache.clear()
 
 
 _BAD_SQL = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|GRANT|REVOKE)\b", re.I)
@@ -89,8 +114,14 @@ async def _with_timeout(coro):
         return await coro
     return await asyncio.wait_for(coro, timeout=settings.MYSQL_QUERY_TIMEOUT_SECONDS)
 
-async def _execute_fetchmany(sql: str, params: Dict[str, Any] | None, max_rows: int) -> Tuple[List[str], List[Any]]:
-    engine = _get_engine()
+async def _execute_fetchmany(
+    sql: str,
+    params: Dict[str, Any] | None,
+    max_rows: int,
+    config: Dict[str, Any] | None,
+    cache_key: str,
+) -> Tuple[List[str], List[Any]]:
+    engine = _get_engine(config, cache_key)
     async with engine.connect() as conn:
         await _apply_query_timeout(conn)
         res = await conn.execute(text(sql), params or {})
@@ -98,8 +129,13 @@ async def _execute_fetchmany(sql: str, params: Dict[str, Any] | None, max_rows: 
         cols = list(res.keys())
     return cols, rows
 
-async def _execute_fetchall(sql: str, params: Dict[str, Any] | None) -> Tuple[List[str], List[Any]]:
-    engine = _get_engine()
+async def _execute_fetchall(
+    sql: str,
+    params: Dict[str, Any] | None,
+    config: Dict[str, Any] | None,
+    cache_key: str,
+) -> Tuple[List[str], List[Any]]:
+    engine = _get_engine(config, cache_key)
     async with engine.connect() as conn:
         await _apply_query_timeout(conn)
         res = await conn.execute(text(sql), params or {})
@@ -107,8 +143,13 @@ async def _execute_fetchall(sql: str, params: Dict[str, Any] | None) -> Tuple[Li
         cols = list(res.keys())
     return cols, rows
 
-async def _execute_noresult(sql: str, params: Dict[str, Any] | None) -> None:
-    engine = _get_engine()
+async def _execute_noresult(
+    sql: str,
+    params: Dict[str, Any] | None,
+    config: Dict[str, Any] | None,
+    cache_key: str,
+) -> None:
+    engine = _get_engine(config, cache_key)
     async with engine.connect() as conn:
         await _apply_query_timeout(conn)
         await conn.execute(text(sql), params or {})
@@ -135,16 +176,24 @@ def validate_readonly_sql(sql: str) -> None:
         raise ValueError("Write/DDL statements are not allowed.")
 
 
-async def run_sql(sql: str, max_rows: int) -> Tuple[List[str], List[List[Any]]]:
+async def run_sql(
+    sql: str,
+    max_rows: int,
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> Tuple[List[str], List[List[Any]]]:
     validate_readonly_sql(sql)
     async def _op():
-        return await _with_timeout(_execute_fetchmany(sql, None, max_rows))
+        return await _with_timeout(_execute_fetchmany(sql, None, max_rows, config, cache_key))
 
     cols, rows = await _with_mysql_retry(_op)
     return cols, [list(r) for r in rows]
 
 
-async def fetch_schema_documents() -> List[Dict[str, Any]]:
+async def fetch_schema_documents(
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> List[Dict[str, Any]]:
     """Fetch schema info from information_schema and return docs for vector store."""
     sql = """
     SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT
@@ -152,8 +201,9 @@ async def fetch_schema_documents() -> List[Dict[str, Any]]:
     WHERE TABLE_SCHEMA = :db
     ORDER BY TABLE_NAME, ORDINAL_POSITION
     """
+    cfg = _normalize_config(config)
     async def _op():
-        return await _with_timeout(_execute_fetchall(sql, {"db": settings.MYSQL_DATABASE}))
+        return await _with_timeout(_execute_fetchall(sql, {"db": cfg["database"]}, config, cache_key))
     _, rows = await _with_mysql_retry(_op)
 
     by_table: Dict[str, List[Dict[str, Any]]] = {}
@@ -194,7 +244,11 @@ async def fetch_schema_documents() -> List[Dict[str, Any]]:
     return docs
 
 
-async def fetch_schema_documents_for_table(table_name: str) -> List[Dict[str, Any]]:
+async def fetch_schema_documents_for_table(
+    table_name: str,
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> List[Dict[str, Any]]:
     if not _IDENT.fullmatch(table_name or ""):
         raise ValueError("Invalid table name")
     sql = """
@@ -203,9 +257,10 @@ async def fetch_schema_documents_for_table(table_name: str) -> List[Dict[str, An
     WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :table
     ORDER BY ORDINAL_POSITION
     """
+    cfg = _normalize_config(config)
     async def _op():
         return await _with_timeout(
-            _execute_fetchall(sql, {"db": settings.MYSQL_DATABASE, "table": table_name})
+            _execute_fetchall(sql, {"db": cfg["database"], "table": table_name}, config, cache_key)
         )
     _, rows = await _with_mysql_retry(_op)
 
@@ -236,15 +291,19 @@ def _quote_ident(name: str) -> str:
     return f"`{name}`"
 
 
-async def list_tables() -> List[Dict[str, Any]]:
+async def list_tables(
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> List[Dict[str, Any]]:
     sql = """
     SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT
     FROM INFORMATION_SCHEMA.TABLES
     WHERE TABLE_SCHEMA = :db
     ORDER BY TABLE_NAME
     """
+    cfg = _normalize_config(config)
     async def _op():
-        return await _with_timeout(_execute_fetchall(sql, {"db": settings.MYSQL_DATABASE}))
+        return await _with_timeout(_execute_fetchall(sql, {"db": cfg["database"]}, config, cache_key))
     _, rows = await _with_mysql_retry(_op)
     out: List[Dict[str, Any]] = []
     for r in rows:
@@ -258,35 +317,50 @@ async def list_tables() -> List[Dict[str, Any]]:
     return out
 
 
-async def preview_table(table_name: str, *, limit: int = 10) -> Tuple[List[str], List[List[Any]]]:
+async def preview_table(
+    table_name: str,
+    *,
+    limit: int = 10,
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> Tuple[List[str], List[List[Any]]]:
     if limit < 1:
         limit = 1
     if limit > 100:
         limit = 100
 
-    tables = await list_tables()
+    tables = await list_tables(config, cache_key)
     allowed = {t["name"] for t in tables}
     if table_name not in allowed:
         raise ValueError("Table not found")
 
     sql = f"SELECT * FROM {_quote_ident(table_name)} LIMIT :limit"
     async def _op():
-        return await _with_timeout(_execute_fetchmany(sql, {"limit": limit}, limit))
+        return await _with_timeout(_execute_fetchmany(sql, {"limit": limit}, limit, config, cache_key))
     cols, rows = await _with_mysql_retry(_op)
     return cols, [list(r) for r in rows]
 
 
-def import_dataframe(table_name: str, df) -> None:
+def import_dataframe(
+    table_name: str,
+    df,
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> None:
     if not _IDENT.fullmatch(table_name or ""):
         raise ValueError("Invalid table name")
-    engine = _get_sync_engine()
+    engine = _get_sync_engine(config, cache_key)
     df.to_sql(table_name, con=engine, if_exists="replace", index=False)
 
 
-async def drop_table(table_name: str) -> None:
+async def drop_table(
+    table_name: str,
+    config: Dict[str, Any] | None = None,
+    cache_key: str = "default",
+) -> None:
     sql = f"DROP TABLE IF EXISTS {_quote_ident(table_name)}"
     async def _op():
-        return await _with_timeout(_execute_noresult(sql, None))
+        return await _with_timeout(_execute_noresult(sql, None, config, cache_key))
     await _with_mysql_retry(_op)
 
 
@@ -305,3 +379,13 @@ def extract_table_names(sql: str) -> List[str]:
             ident = ident.split(".")[-1]
         names.append(ident)
     return names
+
+
+async def ping(config: Dict[str, Any] | None = None, cache_key: str = "default") -> bool:
+    try:
+        async def _op():
+            return await _with_timeout(_execute_fetchall("SELECT 1", None, config, cache_key))
+        await _with_mysql_retry(_op)
+        return True
+    except Exception:
+        return False

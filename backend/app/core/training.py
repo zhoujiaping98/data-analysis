@@ -8,13 +8,12 @@ from backend.app.core.mysql import fetch_schema_documents
 
 log = logging.getLogger("training")
 
-_store: SchemaVectorStore | None = None
+_stores: dict[str, SchemaVectorStore] = {}
 
-def get_store() -> SchemaVectorStore:
-    global _store
-    if _store is None:
-        _store = SchemaVectorStore()
-    return _store
+def get_store(datasource_id: str) -> SchemaVectorStore:
+    if datasource_id not in _stores:
+        _stores[datasource_id] = SchemaVectorStore(collection_suffix=datasource_id)
+    return _stores[datasource_id]
 
 
 async def train_schema_on_startup() -> None:
@@ -22,7 +21,7 @@ async def train_schema_on_startup() -> None:
         log.warning("MySQL config is empty; skip schema training at startup.")
         return
 
-    store = get_store()
+    store = get_store("default")
     try:
         docs = await fetch_schema_documents()
         if not docs:

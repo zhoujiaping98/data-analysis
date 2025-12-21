@@ -6,7 +6,7 @@ from datetime import datetime
 import orjson
 from typing import AsyncGenerator, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import StreamingResponse
 
 from backend.app.api.deps import get_current_user
@@ -27,6 +27,7 @@ from backend.app.services.charting import suggest_echarts_option
 from backend.app.services.analyzer import analyze_stream
 from backend.app.core.resilience import CircuitOpenError
 from backend.app.core.sqlite_store import list_file_uploads
+from backend.app.core.datasources import resolve_datasource
 from backend.app.core.uploads import cleanup_expired_uploads
 
 router = APIRouter()
@@ -40,11 +41,14 @@ def _json_default(obj):
 
 
 @router.post("/chat/sse")
-async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
+async def chat_sse(
+    req: ChatRequest,
+    user=Depends(get_current_user),
+    x_datasource_id: str | None = Header(default=None),
+):
     if not settings.has_llm_config:
         raise HTTPException(status_code=500, detail="LLM config missing (.env)")
-    if not settings.has_mysql_config:
-        raise HTTPException(status_code=500, detail="MySQL config missing (.env)")
+    # datasource config resolved below
     await cleanup_expired_uploads()
 
     async def gen() -> AsyncGenerator[str, None]:
@@ -65,7 +69,10 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
         history = [{"role": r["role"], "content": r["content"]} for r in history_rows if r["role"] in ("user","assistant")]
 
         yield sse_event("status", {"stage": "schema_retrieval", "request_id": request_id})
-        schema_context = build_schema_context(req.message)
+        ds_id, ds_cfg = await resolve_datasource(x_datasource_id)
+        if not all([ds_cfg.get("host"), ds_cfg.get("database"), ds_cfg.get("user"), ds_cfg.get("password")]):
+            raise HTTPException(status_code=500, detail="MySQL datasource config missing")
+        schema_context = build_schema_context(req.message, ds_id)
 
         yield sse_event("status", {"stage": "sql_generation", "request_id": request_id})
         try:
@@ -78,12 +85,12 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
 
         # Enforce table allowlist (base tables + user uploads) to avoid cross-schema access.
         try:
-            base_tables = await list_tables()
+            base_tables = await list_tables(ds_cfg, ds_id)
         except Exception as e:
             yield sse_event("error", {"message": str(e), "request_id": request_id, "where": "schema_tables"})
             yield sse_event("done", {"ok": False, "request_id": request_id})
             return
-        uploads = await list_file_uploads(user["username"])
+        uploads = await list_file_uploads(user["username"], ds_id)
         upload_names = {u["table_name"] for u in uploads}
         allowed_tables = {t["name"] for t in base_tables if not t["name"].startswith("tmp_")} | upload_names
 
@@ -107,7 +114,7 @@ async def chat_sse(req: ChatRequest, user=Depends(get_current_user)):
                     )
                     break
                 yield sse_event("status", {"stage": "sql_execution", "attempt": attempt, "request_id": request_id})
-                cols, rows = await run_sql(sql, max_rows=settings.MAX_ROWS)
+                cols, rows = await run_sql(sql, max_rows=settings.MAX_ROWS, config=ds_cfg, cache_key=ds_id)
                 last_err = None
                 break
             except CircuitOpenError as e:

@@ -47,6 +47,7 @@ async def init_sqlite() -> None:
             CREATE TABLE IF NOT EXISTS file_uploads (
                 id TEXT PRIMARY KEY,
                 owner_username TEXT NOT NULL,
+                datasource_id TEXT,
                 filename TEXT NOT NULL,
                 sheet_name TEXT,
                 table_name TEXT NOT NULL,
@@ -65,11 +66,33 @@ async def init_sqlite() -> None:
                 chart_json TEXT,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS data_sources (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                config_json TEXT NOT NULL,
+                is_default INTEGER NOT NULL,
+                training_ok INTEGER,
+                training_error TEXT,
+                last_trained_at TEXT,
+                created_at TEXT NOT NULL
+            );
             """
         )
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
         if "sheet_name" not in cols:
             cur.execute("ALTER TABLE file_uploads ADD COLUMN sheet_name TEXT")
+        if "datasource_id" not in cols:
+            cur.execute("ALTER TABLE file_uploads ADD COLUMN datasource_id TEXT")
+            cur.execute("UPDATE file_uploads SET datasource_id='default' WHERE datasource_id IS NULL")
+        ds_cols = {r["name"] for r in cur.execute("PRAGMA table_info(data_sources)").fetchall()}
+        if "training_ok" not in ds_cols:
+            cur.execute("ALTER TABLE data_sources ADD COLUMN training_ok INTEGER")
+        if "training_error" not in ds_cols:
+            cur.execute("ALTER TABLE data_sources ADD COLUMN training_error TEXT")
+        if "last_trained_at" not in ds_cols:
+            cur.execute("ALTER TABLE data_sources ADD COLUMN last_trained_at TEXT")
         conn.commit()
         conn.close()
 
@@ -115,6 +138,7 @@ async def list_conversations(owner_username: str) -> List[Dict[str, Any]]:
 async def add_file_upload(
     file_id: str,
     owner_username: str,
+    datasource_id: str,
     filename: str,
     sheet_name: str | None,
     table_name: str,
@@ -124,11 +148,12 @@ async def add_file_upload(
     async with _lock:
         conn = _connect()
         conn.execute(
-            "INSERT INTO file_uploads(id, owner_username, filename, sheet_name, table_name, row_count, columns_json, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO file_uploads(id, owner_username, datasource_id, filename, sheet_name, table_name, row_count, columns_json, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 file_id,
                 owner_username,
+                datasource_id,
                 filename,
                 sheet_name,
                 table_name,
@@ -140,12 +165,12 @@ async def add_file_upload(
         conn.commit()
         conn.close()
 
-async def list_file_uploads(owner_username: str) -> List[Dict[str, Any]]:
+async def list_file_uploads(owner_username: str, datasource_id: str) -> List[Dict[str, Any]]:
     async with _lock:
         conn = _connect()
         rows = conn.execute(
-            "SELECT * FROM file_uploads WHERE owner_username=? ORDER BY created_at DESC",
-            (owner_username,),
+            "SELECT * FROM file_uploads WHERE owner_username=? AND datasource_id=? ORDER BY created_at DESC",
+            (owner_username, datasource_id),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]
@@ -157,12 +182,14 @@ async def get_file_upload(file_id: str) -> Optional[Dict[str, Any]]:
         conn.close()
         return dict(row) if row else None
 
-async def get_file_upload_by_table(owner_username: str, table_name: str) -> Optional[Dict[str, Any]]:
+async def get_file_upload_by_table(
+    owner_username: str, datasource_id: str, table_name: str
+) -> Optional[Dict[str, Any]]:
     async with _lock:
         conn = _connect()
         row = conn.execute(
-            "SELECT * FROM file_uploads WHERE owner_username=? AND table_name=?",
-            (owner_username, table_name),
+            "SELECT * FROM file_uploads WHERE owner_username=? AND datasource_id=? AND table_name=?",
+            (owner_username, datasource_id, table_name),
         ).fetchone()
         conn.close()
         return dict(row) if row else None
@@ -272,3 +299,61 @@ async def get_message_artifact(conv_id: str, user_message_id: int) -> Optional[D
         ).fetchone()
         conn.close()
         return dict(row) if row else None
+
+async def add_datasource(
+    ds_id: str,
+    name: str,
+    ds_type: str,
+    config_json: str,
+    is_default: bool,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        if is_default:
+            conn.execute("UPDATE data_sources SET is_default=0")
+        conn.execute(
+            "INSERT INTO data_sources(id, name, type, config_json, is_default, created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (ds_id, name, ds_type, config_json, 1 if is_default else 0, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+async def list_datasources() -> List[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute("SELECT * FROM data_sources ORDER BY created_at DESC").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+async def get_datasource(ds_id: str) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute("SELECT * FROM data_sources WHERE id=?", (ds_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def get_default_datasource() -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute("SELECT * FROM data_sources WHERE is_default=1 LIMIT 1").fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def set_default_datasource(ds_id: str) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute("UPDATE data_sources SET is_default=0")
+        conn.execute("UPDATE data_sources SET is_default=1 WHERE id=?", (ds_id,))
+        conn.commit()
+        conn.close()
+
+async def update_datasource_training(ds_id: str, ok: bool, error: str | None) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "UPDATE data_sources SET training_ok=?, training_error=?, last_trained_at=? WHERE id=?",
+            (1 if ok else 0, error, datetime.utcnow().isoformat(), ds_id),
+        )
+        conn.commit()
+        conn.close()

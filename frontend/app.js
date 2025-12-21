@@ -1,6 +1,9 @@
 const apiBase = "/api";
 let token = localStorage.getItem("token") || "";
 let activeConversationId = localStorage.getItem("convId") || "";
+let currentDatasourceId = localStorage.getItem("datasourceId") || "";
+let datasourceList = [];
+let activeDsInModal = "";
 let chart = null;
 let analysisStreaming = "";
 let analysisMsgBodyEl = null;
@@ -30,6 +33,7 @@ async function login() {
   token = data.access_token;
   localStorage.setItem("token", token);
   setAuthStatus(`已登录：${username}`);
+  await refreshDatasources();
   await refreshSchemaTables();
   await refreshUploads();
   await refreshConversations();
@@ -43,10 +47,192 @@ async function login() {
 async function apiFetch(path, options={}) {
   const headers = options.headers || {};
   headers["Authorization"] = `Bearer ${token}`;
+  if (currentDatasourceId) headers["X-Datasource-Id"] = currentDatasourceId;
   options.headers = headers;
   const resp = await fetch(`${apiBase}${path}`, options);
   if (!resp.ok) throw new Error(await resp.text());
   return resp;
+}
+
+async function refreshDatasources() {
+  const sel = el("datasourceSelect");
+  if (!sel) return;
+  if (!token) {
+    sel.innerHTML = "";
+    return;
+  }
+  try {
+    const resp = await apiFetch("/datasources");
+    const list = await resp.json();
+    datasourceList = list || [];
+    sel.innerHTML = "";
+    if (!list || list.length === 0) return;
+    let activeId = currentDatasourceId;
+    if (!activeId || !list.find(d => d.id === activeId)) {
+      const def = list.find(d => d.is_default);
+      activeId = def ? def.id : list[0].id;
+      currentDatasourceId = activeId;
+      localStorage.setItem("datasourceId", activeId);
+    }
+    list.forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d.id;
+      const status = d.training_ok === 0 ? "训练失败" : (d.training_ok === 1 ? "已训练" : "未训练");
+      opt.textContent = `${d.name || d.id} (${status})`;
+      if (d.id === activeId) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    // ignore
+  }
+}
+
+function openDsModal() {
+  const modal = el("dsModal");
+  if (!modal) return;
+  modal.classList.add("open");
+  renderDsList();
+}
+
+function closeDsModal() {
+  const modal = el("dsModal");
+  if (!modal) return;
+  modal.classList.remove("open");
+}
+
+function renderDsList() {
+  const listEl = el("dsList");
+  const detailEl = el("dsDetail");
+  if (!listEl || !detailEl) return;
+  listEl.innerHTML = "";
+  if (!datasourceList || datasourceList.length === 0) {
+    listEl.innerHTML = "<div class='muted'>暂无数据源</div>";
+    detailEl.textContent = "请选择一个数据源";
+    return;
+  }
+  datasourceList.forEach(ds => {
+    const item = document.createElement("div");
+    item.className = "ds-item" + (ds.id === activeDsInModal ? " active" : "");
+    const meta = document.createElement("div");
+    meta.className = "ds-meta";
+    const name = document.createElement("div");
+    name.className = "ds-name";
+    name.textContent = ds.name || ds.id;
+    const status = document.createElement("div");
+    status.className = "ds-status";
+    const s = ds.training_ok === 0 ? "训练失败" : (ds.training_ok === 1 ? "已训练" : "未训练");
+    status.textContent = `${ds.type} · ${s}`;
+    meta.appendChild(name);
+    meta.appendChild(status);
+    const badge = document.createElement("div");
+    badge.className = "ds-badge";
+    badge.textContent = ds.is_default ? "默认" : "可选";
+    item.appendChild(meta);
+    item.appendChild(badge);
+    item.onclick = () => selectDsInModal(ds.id);
+    listEl.appendChild(item);
+  });
+  if (!activeDsInModal) {
+    selectDsInModal(datasourceList[0].id);
+  }
+}
+
+function selectDsInModal(dsId) {
+  activeDsInModal = dsId;
+  renderDsList();
+  const ds = datasourceList.find(d => d.id === dsId);
+  const detailEl = el("dsDetail");
+  if (!detailEl || !ds) return;
+  const s = ds.training_ok === 0 ? "训练失败" : (ds.training_ok === 1 ? "已训练" : "未训练");
+  const last = ds.last_trained_at ? `，上次训练：${ds.last_trained_at}` : "";
+  detailEl.textContent = `${ds.name || ds.id} (${ds.type}) · ${s}${last}`;
+}
+
+async function createDatasource() {
+  const statusEl = el("dsFormStatus");
+  if (statusEl) statusEl.textContent = "提交中...";
+  const payload = {
+    name: el("dsName").value.trim(),
+    type: el("dsType").value,
+    host: el("dsHost").value.trim(),
+    port: Number(el("dsPort").value || 3306),
+    database: el("dsDb").value.trim(),
+    user: el("dsUser").value.trim(),
+    password: el("dsPass").value,
+    is_default: el("dsDefault").checked
+  };
+  try {
+    const resp = await apiFetch("/datasources", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (statusEl) statusEl.textContent = data.training_ok ? "创建成功并已训练" : `创建成功但训练失败：${data.training_error || ""}`;
+    await refreshDatasources();
+    renderDsList();
+    await refreshSchemaTables();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "创建失败";
+  }
+}
+
+async function testDatasource() {
+  if (!activeDsInModal) return;
+  const detailEl = el("dsDetail");
+  if (detailEl) detailEl.textContent = "连接测试中...";
+  try {
+    await apiFetch(`/datasources/${encodeURIComponent(activeDsInModal)}/test`, {method: "POST"});
+    if (detailEl) detailEl.textContent = "连接成功";
+  } catch (e) {
+    if (detailEl) detailEl.textContent = "连接失败";
+  }
+}
+
+async function trainDatasourceSelected() {
+  if (!activeDsInModal) return;
+  const detailEl = el("dsDetail");
+  if (detailEl) detailEl.textContent = "训练中...";
+  try {
+    const resp = await apiFetch(`/datasources/${encodeURIComponent(activeDsInModal)}/train`, {method: "POST"});
+    const data = await resp.json();
+    if (detailEl) detailEl.textContent = data.ok ? "训练完成" : `训练失败：${data.error || ""}`;
+    await refreshDatasources();
+    renderDsList();
+    await refreshSchemaTables();
+  } catch (e) {
+    if (detailEl) detailEl.textContent = "训练失败";
+  }
+}
+
+async function setDefaultDatasource() {
+  if (!activeDsInModal) return;
+  try {
+    await apiFetch(`/datasources/${encodeURIComponent(activeDsInModal)}/default`, {method: "PUT"});
+    await refreshDatasources();
+    renderDsList();
+  } catch (e) {
+    // ignore
+  }
+}
+
+async function trainDatasource() {
+  if (!currentDatasourceId) return;
+  try {
+    const resp = await apiFetch(`/datasources/${encodeURIComponent(currentDatasourceId)}/train`, {
+      method: "POST"
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      setAuthStatus(`训练失败：${data.error || "unknown"}`, true);
+    } else {
+      setAuthStatus("训练完成");
+    }
+    await refreshDatasources();
+    await refreshSchemaTables();
+  } catch (e) {
+    setAuthStatus("训练失败", true);
+  }
 }
 
 function renderTableInto(wrapEl, columns, rows) {
@@ -255,7 +441,10 @@ async function loadSheetNames(file) {
   try {
     const resp = await fetch(`${apiBase}/files/sheets`, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${token}` },
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "X-Datasource-Id": currentDatasourceId || ""
+      },
       body: form
     });
     if (!resp.ok) {
@@ -306,7 +495,10 @@ async function uploadFile() {
   try {
     const resp = await fetch(`${apiBase}/files/upload`, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${token}` },
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "X-Datasource-Id": currentDatasourceId || ""
+      },
       body: form
     });
     if (!resp.ok) throw new Error(await resp.text());
@@ -450,7 +642,8 @@ async function sendMessage() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
+      "Authorization": `Bearer ${token}`,
+      "X-Datasource-Id": currentDatasourceId || ""
     },
     body: JSON.stringify({conversation_id: activeConversationId, message: text})
   });
@@ -537,6 +730,21 @@ async function sendMessage() {
 el("btnLogin").onclick = login;
 el("btnNewConv").onclick = newConversation;
 el("btnSend").onclick = sendMessage;
+if (el("datasourceSelect")) el("datasourceSelect").onchange = async (e) => {
+  currentDatasourceId = e.target.value || "";
+  localStorage.setItem("datasourceId", currentDatasourceId);
+  await refreshSchemaTables();
+  await refreshUploads();
+};
+if (el("btnManageDs")) el("btnManageDs").onclick = openDsModal;
+if (el("btnCloseDsModal")) el("btnCloseDsModal").onclick = closeDsModal;
+if (el("dsModal")) el("dsModal").addEventListener("click", (e) => {
+  if (e.target.id === "dsModal") closeDsModal();
+});
+if (el("btnDsCreate")) el("btnDsCreate").onclick = createDatasource;
+if (el("btnDsTest")) el("btnDsTest").onclick = testDatasource;
+if (el("btnDsTrain")) el("btnDsTrain").onclick = trainDatasourceSelected;
+if (el("btnDsDefault")) el("btnDsDefault").onclick = setDefaultDatasource;
 if (el("btnUpload")) el("btnUpload").onclick = uploadFile;
 if (el("btnDrawer")) el("btnDrawer").onclick = () => toggleDrawer(true);
 if (el("btnCloseDrawer")) el("btnCloseDrawer").onclick = () => toggleDrawer(false);
@@ -561,6 +769,7 @@ el("chatInput").addEventListener("keydown", (e) => {
   if (token) {
     setAuthStatus("已读取本地 token");
     try {
+      await refreshDatasources();
       await refreshSchemaTables();
       await refreshUploads();
       await refreshConversations();

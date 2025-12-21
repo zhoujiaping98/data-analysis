@@ -8,13 +8,14 @@ import uuid
 from typing import Dict, List
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header
 
 from backend.app.api.deps import get_current_user
 from backend.app.core.config import settings
 from backend.app.core.mysql import drop_table, fetch_schema_documents_for_table, import_dataframe
 from backend.app.core.training import get_store
 from backend.app.core.uploads import cleanup_expired_uploads
+from backend.app.core.datasources import resolve_datasource
 from backend.app.core.sqlite_store import (
     add_file_upload,
     delete_file_upload,
@@ -83,11 +84,13 @@ async def upload_file(
     file: UploadFile = File(...),
     sheet_name: str | None = Form(default=None),
     user=Depends(get_current_user),
+    x_datasource_id: str | None = Header(default=None),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
     await cleanup_expired_uploads()
+    ds_id, ds_cfg = await resolve_datasource(x_datasource_id)
 
     raw = await file.read()
     if len(raw) > settings.FILE_UPLOAD_MAX_BYTES:
@@ -114,13 +117,14 @@ async def upload_file(
 
     # pandas to_sql is sync, run in a worker thread
     try:
-        await asyncio.to_thread(import_dataframe, table_name, df)
+        await asyncio.to_thread(import_dataframe, table_name, df, ds_cfg, ds_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Import failed: {e}") from e
 
     await add_file_upload(
         file_id=file_id,
         owner_username=user["username"],
+        datasource_id=ds_id,
         filename=file.filename,
         sheet_name=effective_sheet,
         table_name=table_name,
@@ -130,9 +134,9 @@ async def upload_file(
 
     # Update vector store with the new table schema for SQL generation
     try:
-        docs = await fetch_schema_documents_for_table(table_name)
+        docs = await fetch_schema_documents_for_table(table_name, ds_cfg, ds_id)
         if docs:
-            get_store().upsert_schema_docs(docs)
+            get_store(ds_id).upsert_schema_docs(docs)
     except Exception:
         pass
 
@@ -146,13 +150,14 @@ async def upload_file(
 
 
 @router.get("/files")
-async def list_files(user=Depends(get_current_user)):
+async def list_files(user=Depends(get_current_user), x_datasource_id: str | None = Header(default=None)):
     await cleanup_expired_uploads()
-    return await list_file_uploads(user["username"])
+    ds_id, _ = await resolve_datasource(x_datasource_id)
+    return await list_file_uploads(user["username"], ds_id)
 
 
 @router.delete("/files/{file_id}")
-async def delete_file(file_id: str, user=Depends(get_current_user)):
+async def delete_file(file_id: str, user=Depends(get_current_user), x_datasource_id: str | None = Header(default=None)):
     meta = await get_file_upload(file_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="File not found")
@@ -161,7 +166,8 @@ async def delete_file(file_id: str, user=Depends(get_current_user)):
 
     # drop table
     try:
-        await drop_table(meta["table_name"])
+        ds_id, ds_cfg = await resolve_datasource(x_datasource_id or meta.get("datasource_id"))
+        await drop_table(meta["table_name"], ds_cfg, ds_id)
     except Exception:
         pass
 

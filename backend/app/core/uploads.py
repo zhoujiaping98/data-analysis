@@ -4,7 +4,8 @@ from typing import List
 
 from backend.app.core.config import settings
 from backend.app.core.mysql import drop_table
-from backend.app.core.sqlite_store import delete_file_uploads, list_expired_file_uploads
+from backend.app.core.sqlite_store import delete_file_uploads, list_expired_file_uploads, get_datasource
+import json
 
 
 async def cleanup_expired_uploads(ttl_hours: int | None = None) -> int:
@@ -18,7 +19,12 @@ async def cleanup_expired_uploads(ttl_hours: int | None = None) -> int:
 
     for meta in expired:
         try:
-            await drop_table(meta["table_name"])
+            ds_id = meta.get("datasource_id") or "default"
+            ds = await get_datasource(ds_id)
+            if not ds:
+                continue
+            cfg = json.loads(ds["config_json"])
+            await drop_table(meta["table_name"], cfg, ds_id)
         except Exception:
             pass
 

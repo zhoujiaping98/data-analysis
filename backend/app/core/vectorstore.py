@@ -99,7 +99,7 @@ class ResilientEmbeddingFunction(EmbeddingFunction):
 
 
 class SchemaVectorStore:
-    def __init__(self):
+    def __init__(self, collection_suffix: str | None = None):
         os.makedirs(settings.CHROMA_PERSIST_DIR, exist_ok=True)
 
         # Prefer remote embeddings when configured; otherwise use a lightweight offline fallback.
@@ -113,18 +113,21 @@ class SchemaVectorStore:
         self._client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
         self._embed_fn = embed_fn
         self._collection_metadata = {"hnsw:space": "cosine"}
+        self._collection_name = settings.CHROMA_COLLECTION
+        if collection_suffix:
+            self._collection_name = f"{settings.CHROMA_COLLECTION}_{collection_suffix}"
         self._collection = self._get_or_create_collection()
 
     def _get_or_create_collection(self):
         return self._client.get_or_create_collection(
-            name=settings.CHROMA_COLLECTION,
+            name=self._collection_name,
             embedding_function=self._embed_fn,
             metadata=self._collection_metadata,
         )
 
     def reset(self) -> None:
         try:
-            self._client.delete_collection(settings.CHROMA_COLLECTION)
+            self._client.delete_collection(self._collection_name)
         except Exception:
             pass
         self._collection = self._get_or_create_collection()

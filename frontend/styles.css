@@ -76,6 +76,150 @@ body::before {
 }
 
 .auth { display:flex; gap:8px; align-items:center; }
+.datasource {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.datasource select {
+  background: rgba(255,255,255,.78);
+  border: 1px solid rgba(11, 16, 32, 0.18);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  min-width: 160px;
+}
+.datasource .ghost {
+  padding: 6px 10px;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 14, 28, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  transition: opacity 0.2s ease;
+}
+.modal.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.modal-card {
+  width: min(980px, 92vw);
+  max-height: 88vh;
+  background: linear-gradient(180deg, var(--panel-strong), rgba(255, 255, 255, 0.95));
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.6);
+}
+.modal-body {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+}
+.modal-left, .modal-right {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.ds-item {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(11, 16, 32, 0.12);
+  background: rgba(255,255,255,.8);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ds-item.active {
+  border-color: rgba(0, 180, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(0, 180, 255, 0.15);
+}
+.ds-meta { min-width: 0; }
+.ds-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-status { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.ds-badge {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid rgba(0, 180, 255, 0.3);
+  color: rgba(0, 180, 255, 0.9);
+  height: fit-content;
+}
+.ds-detail {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(11, 16, 32, 0.16);
+  min-height: 70px;
+}
+.ds-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.form-grid input, .form-grid select {
+  background: rgba(255,255,255,.85);
+  border: 1px solid rgba(11, 16, 32, 0.18);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.checkline {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+#btnDsCreate { grid-column: 1 / -1; }
+#dsFormStatus { grid-column: 1 / -1; }
+
+@media (max-width: 900px) {
+  .modal-body {
+    grid-template-columns: 1fr;
+  }
+}
+.datasource select:focus {
+  outline: none;
+  border-color: rgba(0, 180, 255, 0.45);
+  box-shadow: var(--ring);
+}
 .auth input {
   background: rgba(255,255,255,.78);
   border: 1px solid rgba(11, 16, 32, 0.18);

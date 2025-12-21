@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     MYSQL_DATABASE: str = ""
     MYSQL_USER: str = ""
     MYSQL_PASSWORD: str = ""
+    MYSQL_POOL_SIZE: int = 5
+    MYSQL_MAX_OVERFLOW: int = 10
+    MYSQL_POOL_RECYCLE_SECONDS: int = 3600
 
     # LLM (DeepSeek)
     DEEPSEEK_BASE_URL: str = ""
@@ -76,6 +79,9 @@ class Settings(BaseSettings):
     @field_validator(
         "JWT_EXPIRE_MINUTES",
         "MYSQL_PORT",
+        "MYSQL_POOL_SIZE",
+        "MYSQL_MAX_OVERFLOW",
+        "MYSQL_POOL_RECYCLE_SECONDS",
         "LLM_TIMEOUT_SECONDS",
         "LLM_MAX_RETRIES",
         "LLM_CB_FAILURES",
