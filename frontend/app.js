@@ -154,17 +154,24 @@ async function previewTable(tableName) {
 
 async function refreshUploads() {
   const listEl = el("uploadList");
+  const titleEl = el("uploadSectionTitle");
   if (!listEl) return;
   if (!token) {
-    listEl.innerHTML = "<div class='pad muted'>登录后可查看上传文件</div>";
+    listEl.innerHTML = "";
+    if (titleEl) titleEl.style.display = "none";
+    listEl.style.display = "none";
     return;
   }
   listEl.innerHTML = "<div class='pad muted'>加载中...</div>";
+  listEl.style.display = "";
+  if (titleEl) titleEl.style.display = "";
   try {
     const resp = await apiFetch("/files");
     const files = await resp.json();
     if (!files || files.length === 0) {
-      listEl.innerHTML = "<div class='pad muted'>无上传文件</div>";
+      listEl.innerHTML = "";
+      listEl.style.display = "none";
+      if (titleEl) titleEl.style.display = "none";
       return;
     }
     listEl.innerHTML = "";
@@ -204,7 +211,9 @@ async function refreshUploads() {
       listEl.appendChild(item);
     });
   } catch (e) {
-    listEl.innerHTML = "<div class='pad error'>加载失败</div>";
+    listEl.innerHTML = "";
+    listEl.style.display = "none";
+    if (titleEl) titleEl.style.display = "none";
   }
 }
 
@@ -572,9 +581,11 @@ function toggleDrawer(open) {
   if (open) {
     drawer.classList.add("open");
     overlay.classList.add("open");
+    document.body.classList.add("drawer-open");
   } else {
     drawer.classList.remove("open");
     overlay.classList.remove("open");
+    document.body.classList.remove("drawer-open");
   }
 }
 

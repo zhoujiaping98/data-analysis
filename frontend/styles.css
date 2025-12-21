@@ -362,12 +362,14 @@ textarea:focus {
 
 .drawer {
   position: fixed;
-  top: var(--topbar-height);
+  top: 0;
   right: 0;
   bottom: 0;
-  width: 380px;
+  width: 760px;
   background: linear-gradient(180deg, var(--panel-strong), rgba(255, 255, 255, 0.92));
   border-left: 1px solid var(--border);
+  border-top-left-radius: 26px;
+  border-bottom-left-radius: 26px;
   box-shadow: var(--shadow);
   transform: translateX(100%);
   transition: transform .24s ease;
@@ -378,9 +380,20 @@ textarea:focus {
 
 .drawer.open { transform: translateX(0); }
 .drawer-overlay.open { opacity: 1; pointer-events: auto; }
+body.drawer-open .drawer-toggle {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.98);
+}
 .drawer-actions { display: flex; gap: 8px; }
 
 .schema { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.schema .pad { padding: 10px 14px; }
+.schema .subhead {
+  display: inline-flex;
+  align-self: flex-start;
+  padding-right: 0;
+}
 .upload-box {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -419,9 +432,9 @@ textarea:focus {
 .sample-link:hover { text-decoration: underline; }
 
 .table-list {
-  padding: 8px 10px;
+  padding: 10px 12px;
   overflow: auto;
-  max-height: 220px;
+  max-height: 240px;
   display: flex;
   flex-direction: column;
   gap: 8px;
