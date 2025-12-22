@@ -124,6 +124,18 @@ async def init_sqlite() -> None:
                 tables_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS qa_pairs (
+                id TEXT PRIMARY KEY,
+                datasource_id TEXT NOT NULL,
+                question TEXT NOT NULL,
+                sql TEXT NOT NULL,
+                note TEXT,
+                tables_json TEXT,
+                tags_json TEXT,
+                enabled INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
@@ -588,5 +600,88 @@ async def delete_table_scope(scope_id: str, owner_username: str) -> None:
             "DELETE FROM table_scopes WHERE id=? AND owner_username=?",
             (scope_id, owner_username),
         )
+        conn.commit()
+        conn.close()
+
+async def list_qa_pairs(datasource_id: str) -> List[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM qa_pairs WHERE datasource_id=? ORDER BY created_at DESC",
+            (datasource_id,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+async def get_qa_pair(qa_id: str) -> Optional[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT * FROM qa_pairs WHERE id=?",
+            (qa_id,),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+async def add_qa_pair(
+    qa_id: str,
+    datasource_id: str,
+    question: str,
+    sql: str,
+    note: str | None,
+    tables_json: str | None,
+    tags_json: str | None,
+    enabled: bool,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO qa_pairs(id, datasource_id, question, sql, note, tables_json, tags_json, enabled, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                qa_id,
+                datasource_id,
+                question,
+                sql,
+                note,
+                tables_json,
+                tags_json,
+                1 if enabled else 0,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def update_qa_pair(
+    qa_id: str,
+    question: str,
+    sql: str,
+    note: str | None,
+    tables_json: str | None,
+    tags_json: str | None,
+    enabled: bool,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "UPDATE qa_pairs SET question=?, sql=?, note=?, tables_json=?, tags_json=?, enabled=? WHERE id=?",
+            (
+                question,
+                sql,
+                note,
+                tables_json,
+                tags_json,
+                1 if enabled else 0,
+                qa_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def delete_qa_pair(qa_id: str) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute("DELETE FROM qa_pairs WHERE id=?", (qa_id,))
         conn.commit()
         conn.close()

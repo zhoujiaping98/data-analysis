@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;600&family=Oxanium:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=11" />
+  <link rel="stylesheet" href="/styles.css?v=13" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -220,6 +220,31 @@
             <button id="btnDsCreate" class="btn-mini">创建并训练</button>
             <div id="dsFormStatus" class="muted"></div>
           </div>
+
+          <div class="subhead" style="margin-top:16px;">问答样本</div>
+          <div class="qa-tools">
+            <input id="qaSearch" placeholder="搜索问题/表/标签" />
+            <label class="checkline">
+              <input id="qaOnlyEnabled" type="checkbox" />
+              仅显示启用
+            </label>
+            <button id="btnAddQa" class="btn-mini">新增样本</button>
+          </div>
+          <div class="qa-batch">
+            <label class="checkline">
+              <input id="qaSelectAll" type="checkbox" />
+              全选
+            </label>
+            <span id="qaSelectedCount" class="muted">已选 0</span>
+            <button id="btnQaEnable" class="ghost">启用</button>
+            <button id="btnQaDisable" class="ghost">停用</button>
+            <button id="btnQaDelete" class="ghost">删除</button>
+            <button id="btnQaImport" class="ghost">导入</button>
+            <a id="qaTemplateLink" class="sample-link" href="/qa_template.csv" download>导入模板下载</a>
+            <input id="qaImportFile" type="file" accept=".json,.csv" style="display:none" />
+            <span id="qaImportStatus" class="muted"></span>
+          </div>
+          <div id="qaList" class="qa-list"></div>
         </div>
       </div>
     </div>
@@ -457,6 +482,33 @@
     </div>
   </div>
 
-  <script src="/app.js?v=46"></script>
+  <div id="qaModal" class="modal">
+    <div class="modal-card qa-card">
+      <div class="modal-header">
+        <div class="title">问答样本</div>
+        <button id="btnCloseQa" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body qa-body">
+        <input id="qaQuestion" placeholder="问题" />
+        <textarea id="qaSql" rows="6" placeholder="SQL（仅 SELECT/WITH）"></textarea>
+        <label class="qa-field">
+          <span>关联表</span>
+          <select id="qaTables" multiple></select>
+        </label>
+        <input id="qaTags" placeholder="标签（逗号分隔）" />
+        <textarea id="qaNote" rows="3" placeholder="说明（可选）"></textarea>
+        <label class="checkline">
+          <input id="qaEnabled" type="checkbox" checked />
+          启用
+        </label>
+        <div class="qa-actions">
+          <div id="qaStatus" class="muted"></div>
+          <button id="btnSaveQa" class="btn-mini">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=50"></script>
 </body>
 </html>

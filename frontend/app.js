@@ -63,6 +63,10 @@ let scopeState = {
   lock: false
 };
 let scopeSelection = new Set();
+let qaItems = [];
+let qaTablesCache = [];
+let editingQaId = "";
+let selectedQaIds = new Set();
 
 
 const el = (id) => document.getElementById(id);
@@ -92,6 +96,8 @@ async function login() {
   await refreshDatasources();
   await refreshScopes();
   loadScopeState();
+  await refreshQaList();
+  await refreshQaTables();
   await refreshSchemaTables();
   await refreshUploads();
   await refreshConversations();
@@ -289,6 +295,322 @@ function getActiveScopePayload() {
     table_lock: !!scopeState.lock,
     scope_name: scopeName
   };
+}
+
+async function refreshQaTables() {
+  if (!token) return [];
+  try {
+    const resp = await apiFetch("/schema/tables");
+    qaTablesCache = await resp.json();
+    return qaTablesCache;
+  } catch (e) {
+    qaTablesCache = [];
+    return [];
+  }
+}
+
+async function refreshQaList() {
+  const listEl = el("qaList");
+  if (!listEl) return;
+  if (!token) {
+    listEl.innerHTML = "";
+    return;
+  }
+  listEl.innerHTML = "<div class='muted'>加载中...</div>";
+  try {
+    const resp = await apiFetch("/qa");
+    qaItems = await resp.json();
+    const ids = new Set((qaItems || []).map(i => i.id));
+    selectedQaIds = new Set(Array.from(selectedQaIds).filter(id => ids.has(id)));
+    renderQaList();
+  } catch (e) {
+    listEl.innerHTML = "<div class='muted'>加载失败</div>";
+  }
+}
+
+function renderQaList() {
+  const listEl = el("qaList");
+  if (!listEl) return;
+  const items = filterVisibleQaItems();
+
+  if (!items.length) {
+    listEl.innerHTML = "<div class='muted'>暂无样本</div>";
+    updateQaSelectionUI();
+    return;
+  }
+  listEl.innerHTML = "";
+  items.forEach(i => {
+    const item = document.createElement("div");
+    item.className = "qa-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selectedQaIds.has(i.id);
+    checkbox.onchange = () => {
+      if (checkbox.checked) selectedQaIds.add(i.id);
+      else selectedQaIds.delete(i.id);
+      updateQaSelectionUI();
+    };
+    const meta = document.createElement("div");
+    meta.className = "qa-meta";
+    const title = document.createElement("div");
+    title.className = "qa-title";
+    title.textContent = i.question || "-";
+    const sub = document.createElement("div");
+    sub.className = "qa-sub";
+    const tables = (i.tables || []).join(", ");
+    const tags = (i.tags || []).join(", ");
+    sub.textContent = [tables, tags].filter(Boolean).join(" | ") || "未关联表";
+    meta.appendChild(title);
+    meta.appendChild(sub);
+
+    const actions = document.createElement("div");
+    actions.className = "qa-actions";
+    const badge = document.createElement("div");
+    badge.className = "qa-badge" + (i.enabled ? "" : " off");
+    badge.textContent = i.enabled ? "启用" : "停用";
+    const btnEdit = document.createElement("button");
+    btnEdit.className = "btn-mini";
+    btnEdit.textContent = "编辑";
+    btnEdit.onclick = () => openQaModal(i);
+    const btnDel = document.createElement("button");
+    btnDel.className = "btn-mini danger";
+    btnDel.textContent = "删除";
+    btnDel.onclick = () => deleteQa(i.id);
+    actions.appendChild(badge);
+    actions.appendChild(btnEdit);
+    actions.appendChild(btnDel);
+
+    item.appendChild(checkbox);
+    item.appendChild(meta);
+    item.appendChild(actions);
+    listEl.appendChild(item);
+  });
+  updateQaSelectionUI();
+}
+
+function filterVisibleQaItems() {
+  const q = (el("qaSearch")?.value || "").trim().toLowerCase();
+  const onlyEnabled = !!el("qaOnlyEnabled")?.checked;
+  let items = qaItems || [];
+  if (q) {
+    items = items.filter(i => {
+      const t = (i.question || "").toLowerCase();
+      const tables = (i.tables || []).join(",").toLowerCase();
+      const tags = (i.tags || []).join(",").toLowerCase();
+      return t.includes(q) || tables.includes(q) || tags.includes(q);
+    });
+  }
+  if (onlyEnabled) items = items.filter(i => i.enabled);
+  return items;
+}
+
+function updateQaSelectionUI() {
+  const countEl = el("qaSelectedCount");
+  if (countEl) countEl.textContent = `已选 ${selectedQaIds.size}`;
+  const selectAll = el("qaSelectAll");
+  if (!selectAll) return;
+  const visibleIds = filterVisibleQaItems().map(i => i.id);
+  const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedQaIds.has(id));
+  selectAll.checked = allChecked;
+}
+
+function resetQaModal() {
+  editingQaId = "";
+  if (el("qaQuestion")) el("qaQuestion").value = "";
+  if (el("qaSql")) el("qaSql").value = "";
+  if (el("qaTags")) el("qaTags").value = "";
+  if (el("qaNote")) el("qaNote").value = "";
+  if (el("qaEnabled")) el("qaEnabled").checked = true;
+  if (el("qaStatus")) el("qaStatus").textContent = "";
+}
+
+function openQaModal(item = null) {
+  const modal = el("qaModal");
+  if (!modal) return;
+  resetQaModal();
+  if (item) {
+    editingQaId = item.id || "";
+    if (el("qaQuestion")) el("qaQuestion").value = item.question || "";
+    if (el("qaSql")) el("qaSql").value = item.sql || "";
+    if (el("qaTags")) el("qaTags").value = (item.tags || []).join(",");
+    if (el("qaNote")) el("qaNote").value = item.note || "";
+    if (el("qaEnabled")) el("qaEnabled").checked = !!item.enabled;
+  }
+  refreshQaTables().then(() => {
+    renderQaTableOptions(item?.tables || []);
+  });
+  modal.classList.add("open");
+}
+
+function closeQaModal() {
+  const modal = el("qaModal");
+  if (modal) modal.classList.remove("open");
+}
+
+function renderQaTableOptions(selected = []) {
+  const select = el("qaTables");
+  if (!select) return;
+  select.innerHTML = "";
+  (qaTablesCache || []).forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name;
+    if (selected.includes(t.name)) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+function getSelectedQaTables() {
+  const select = el("qaTables");
+  if (!select) return [];
+  return Array.from(select.selectedOptions).map(o => o.value);
+}
+
+async function saveQa() {
+  const status = el("qaStatus");
+  const question = (el("qaQuestion")?.value || "").trim();
+  const sql = (el("qaSql")?.value || "").trim();
+  const tags = (el("qaTags")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+  const note = (el("qaNote")?.value || "").trim();
+  const tables = getSelectedQaTables();
+  const enabled = !!el("qaEnabled")?.checked;
+  if (!question || !sql) {
+    if (status) status.textContent = "请输入问题和 SQL";
+    return;
+  }
+  if (status) status.textContent = "保存中...";
+  try {
+    if (editingQaId) {
+      await apiFetch(`/qa/${encodeURIComponent(editingQaId)}`, {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ question, sql, note, tables, tags, enabled })
+      });
+    } else {
+      await apiFetch("/qa", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ question, sql, note, tables, tags, enabled })
+      });
+    }
+    await refreshQaList();
+    closeQaModal();
+  } catch (e) {
+    let msg = e?.message || String(e);
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed && parsed.detail) msg = parsed.detail;
+    } catch (_) {}
+    if (status) status.textContent = `保存失败：${msg}`;
+  }
+}
+
+async function deleteQa(id) {
+  if (!id) return;
+  if (!confirm("确定删除该样本吗？")) return;
+  try {
+    await apiFetch(`/qa/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await refreshQaList();
+  } catch (e) {
+    // ignore
+  }
+}
+
+function parseCsv(text) {
+  const lines = (text || "").split(/\r?\n/).filter(l => l.trim() !== "");
+  if (!lines.length) return [];
+  const headers = [];
+  const parseLine = (line) => {
+    const out = [];
+    let cur = "";
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === "\"") {
+        if (inQuote && line[i + 1] === "\"") {
+          cur += "\"";
+          i += 1;
+        } else {
+          inQuote = !inQuote;
+        }
+        continue;
+      }
+      if (ch === "," && !inQuote) {
+        out.push(cur);
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  };
+  parseLine(lines[0]).forEach(h => headers.push(h.toLowerCase()));
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseLine(lines[i]);
+    const row = {};
+    headers.forEach((h, idx) => row[h] = cols[idx] ?? "");
+    rows.push(row);
+  }
+  return rows;
+}
+
+async function importQaFile(file) {
+  const status = el("qaImportStatus");
+  if (!file) return;
+  if (status) status.textContent = "导入中...";
+  try {
+    const text = await file.text();
+    let items = [];
+    if (file.name.toLowerCase().endsWith(".json")) {
+      const parsed = JSON.parse(text);
+      items = Array.isArray(parsed) ? parsed : (parsed.items || []);
+    } else {
+      const rows = parseCsv(text);
+      items = rows.map(r => ({
+        question: r.question || r.q || "",
+        sql: r.sql || "",
+        note: r.note || "",
+        tables: (r.tables || "").split(",").map(s => s.trim()).filter(Boolean),
+        tags: (r.tags || "").split(",").map(s => s.trim()).filter(Boolean),
+        enabled: (String(r.enabled || "true").toLowerCase() !== "false")
+      }));
+    }
+    if (!items.length) {
+      if (status) status.textContent = "文件中没有可导入数据";
+      return;
+    }
+    const resp = await apiFetch("/qa/bulk", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ items })
+    });
+    const data = await resp.json();
+    if (status) status.textContent = `已导入 ${data.created || 0} 条`;
+    await refreshQaList();
+  } catch (e) {
+    if (status) status.textContent = "导入失败";
+  }
+}
+
+async function batchQaAction(action) {
+  const ids = Array.from(selectedQaIds);
+  if (!ids.length) return;
+  if (action === "delete" && !confirm("确定删除选中的样本吗？")) return;
+  try {
+    await apiFetch("/qa/batch", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ action, ids })
+    });
+    if (action === "delete") {
+      selectedQaIds.clear();
+    }
+    await refreshQaList();
+  } catch (e) {
+    // ignore
+  }
 }
 
 
@@ -614,6 +936,7 @@ function openDsModal() {
   if (!modal) return;
   modal.classList.add("open");
   renderDsList();
+  refreshQaList();
 }
 
 function closeDsModal() {
@@ -2293,6 +2616,8 @@ if (el("datasourceSelect")) el("datasourceSelect").onchange = async (e) => {
   localStorage.setItem("datasourceId", currentDatasourceId);
   await refreshScopes();
   loadScopeState();
+  await refreshQaList();
+  await refreshQaTables();
   await refreshSchemaTables();
   await refreshUploads();
   await refreshSchemaChanges();
@@ -2356,6 +2681,29 @@ if (el("scopeLock")) el("scopeLock").onchange = (e) => {
   scopeState.lock = !!e.target.checked;
   saveScopeState();
 };
+if (el("btnAddQa")) el("btnAddQa").onclick = () => openQaModal();
+if (el("btnCloseQa")) el("btnCloseQa").onclick = closeQaModal;
+if (el("btnSaveQa")) el("btnSaveQa").onclick = saveQa;
+if (el("qaModal")) el("qaModal").addEventListener("click", (e) => {
+  if (e.target.id === "qaModal") closeQaModal();
+});
+if (el("qaSearch")) el("qaSearch").addEventListener("input", renderQaList);
+if (el("qaOnlyEnabled")) el("qaOnlyEnabled").onchange = renderQaList;
+if (el("qaSelectAll")) el("qaSelectAll").onchange = (e) => {
+  const visible = filterVisibleQaItems().map(i => i.id);
+  if (e.target.checked) visible.forEach(id => selectedQaIds.add(id));
+  else visible.forEach(id => selectedQaIds.delete(id));
+  renderQaList();
+};
+if (el("btnQaEnable")) el("btnQaEnable").onclick = () => batchQaAction("enable");
+if (el("btnQaDisable")) el("btnQaDisable").onclick = () => batchQaAction("disable");
+if (el("btnQaDelete")) el("btnQaDelete").onclick = () => batchQaAction("delete");
+if (el("btnQaImport")) el("btnQaImport").onclick = () => el("qaImportFile")?.click();
+if (el("qaImportFile")) el("qaImportFile").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) importQaFile(file);
+  e.target.value = "";
+});
 if (el("btnEditSql")) el("btnEditSql").onclick = openSqlModal;
 if (el("btnCloseSqlModal")) el("btnCloseSqlModal").onclick = closeSqlModal;
 if (el("sqlModal")) el("sqlModal").addEventListener("click", (e) => {
@@ -2608,6 +2956,8 @@ el("chatInput").addEventListener("keydown", (e) => {
       await refreshDatasources();
       await refreshScopes();
       loadScopeState();
+      await refreshQaList();
+      await refreshQaTables();
       await refreshSchemaTables();
       await refreshUploads();
       await refreshSchemaChanges();

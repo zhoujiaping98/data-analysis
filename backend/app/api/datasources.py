@@ -15,8 +15,10 @@ from backend.app.core.sqlite_store import (
     get_datasource,
     set_default_datasource,
     update_datasource_training,
+    list_qa_pairs,
 )
 from backend.app.core.training import get_store
+from backend.app.core.qa_docs import build_qa_doc
 
 router = APIRouter()
 
@@ -70,7 +72,34 @@ async def create_ds(payload: Dict[str, Any], user=Depends(get_current_user)):
     try:
         docs = await fetch_schema_documents(config, ds_id)
         if docs:
-            get_store(ds_id).upsert_schema_docs(docs)
+            store = get_store(ds_id)
+            store.upsert_schema_docs(docs)
+            qa_rows = await list_qa_pairs(ds_id)
+            qa_docs = []
+            for r in qa_rows:
+                if not r.get("enabled"):
+                    continue
+                try:
+                    tables = json.loads(r.get("tables_json") or "[]")
+                except Exception:
+                    tables = []
+                try:
+                    tags = json.loads(r.get("tags_json") or "[]")
+                except Exception:
+                    tags = []
+                qa_docs.append(
+                    build_qa_doc(
+                        r["id"],
+                        ds_id,
+                        r.get("question") or "",
+                        r.get("sql") or "",
+                        r.get("note"),
+                        tables,
+                        tags,
+                    )
+                )
+            if qa_docs:
+                store.upsert_qa_docs(qa_docs)
         else:
             training_ok = False
             training_error = "No schema docs fetched"
@@ -116,6 +145,32 @@ async def train_ds(ds_id: str, user=Depends(get_current_user)):
             store = get_store(ds_id)
             store.reset()
             store.upsert_schema_docs(docs)
+            qa_rows = await list_qa_pairs(ds_id)
+            qa_docs = []
+            for r in qa_rows:
+                if not r.get("enabled"):
+                    continue
+                try:
+                    tables = json.loads(r.get("tables_json") or "[]")
+                except Exception:
+                    tables = []
+                try:
+                    tags = json.loads(r.get("tags_json") or "[]")
+                except Exception:
+                    tags = []
+                qa_docs.append(
+                    build_qa_doc(
+                        r["id"],
+                        ds_id,
+                        r.get("question") or "",
+                        r.get("sql") or "",
+                        r.get("note"),
+                        tables,
+                        tags,
+                    )
+                )
+            if qa_docs:
+                store.upsert_qa_docs(qa_docs)
         else:
             training_ok = False
             training_error = "No schema docs fetched"

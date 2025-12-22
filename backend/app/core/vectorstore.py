@@ -158,6 +158,40 @@ class SchemaVectorStore:
         except Exception as e:
             log.warning("Failed to delete schema docs. err=%s", e)
 
+    def upsert_qa_docs(self, docs: List[Dict[str, Any]]) -> None:
+        if not docs:
+            return
+        ids = [d["id"] for d in docs]
+        texts = [d["text"] for d in docs]
+        metas = [d.get("metadata", {}) for d in docs]
+        try:
+            self._collection.upsert(ids=ids, documents=texts, metadatas=metas)
+            return
+        except Exception as e:
+            msg = str(e)
+            if "expecting embedding with dimension" in msg.lower():
+                log.warning("Embedding dimension changed; resetting collection and retrying. err=%s", e)
+                self.reset()
+                self._collection.upsert(ids=ids, documents=texts, metadatas=metas)
+                return
+            raise
+
+    def delete_qa_docs(self, qa_ids: List[str]) -> None:
+        if not qa_ids:
+            return
+        ids = []
+        for qid in qa_ids:
+            if not qid:
+                continue
+            if qid.startswith("qa::"):
+                ids.append(qid)
+            else:
+                ids.append(f"qa::{qid}")
+        try:
+            self._collection.delete(ids=ids)
+        except Exception as e:
+            log.warning("Failed to delete QA docs. err=%s", e)
+
     def search(self, query: str, k: int = 8) -> List[Dict[str, Any]]:
         try:
             res = self._collection.query(query_texts=[query], n_results=k)

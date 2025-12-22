@@ -18,6 +18,7 @@ from backend.app.api.export import router as export_router
 from backend.app.api.sql import router as sql_router
 from backend.app.api.audits import router as audits_router
 from backend.app.api.scopes import router as scopes_router
+from backend.app.api.qa import router as qa_router
 from backend.app.core.sqlite_store import init_sqlite
 from backend.app.core.mysql import close_engine
 from backend.app.core.uploads import cleanup_expired_uploads
@@ -49,6 +50,7 @@ app.include_router(export_router, prefix="/api")
 app.include_router(sql_router, prefix="/api")
 app.include_router(audits_router, prefix="/api")
 app.include_router(scopes_router, prefix="/api")
+app.include_router(qa_router, prefix="/api")
 
 # Serve frontend
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))

@@ -1,0 +1,2 @@
+﻿question,sql,tables,tags,note,enabled
+本月按地区销售额,"SELECT region, SUM(amount) AS total FROM orders WHERE order_date >= DATE_FORMAT(CURDATE(), ''%Y-%m-01'') GROUP BY region",orders,"销售,地区","口径说明（可选）",true
