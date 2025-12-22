@@ -115,6 +115,15 @@ async def init_sqlite() -> None:
                 changed_json TEXT,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS table_scopes (
+                id TEXT PRIMARY KEY,
+                owner_username TEXT NOT NULL,
+                datasource_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                tables_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(file_uploads)").fetchall()}
@@ -534,6 +543,50 @@ async def update_datasource_training(ds_id: str, ok: bool, error: str | None) ->
         conn.execute(
             "UPDATE data_sources SET training_ok=?, training_error=?, last_trained_at=? WHERE id=?",
             (1 if ok else 0, error, datetime.utcnow().isoformat(), ds_id),
+        )
+        conn.commit()
+        conn.close()
+
+async def list_table_scopes(owner_username: str, datasource_id: str) -> List[Dict[str, Any]]:
+    async with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT * FROM table_scopes WHERE owner_username=? AND datasource_id=? ORDER BY created_at DESC",
+            (owner_username, datasource_id),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+async def add_table_scope(
+    scope_id: str,
+    owner_username: str,
+    datasource_id: str,
+    name: str,
+    tables_json: str,
+) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "INSERT INTO table_scopes(id, owner_username, datasource_id, name, tables_json, created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                scope_id,
+                owner_username,
+                datasource_id,
+                name,
+                tables_json,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+async def delete_table_scope(scope_id: str, owner_username: str) -> None:
+    async with _lock:
+        conn = _connect()
+        conn.execute(
+            "DELETE FROM table_scopes WHERE id=? AND owner_username=?",
+            (scope_id, owner_username),
         )
         conn.commit()
         conn.close()

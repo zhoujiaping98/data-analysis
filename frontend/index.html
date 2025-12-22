@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;600&family=Oxanium:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=7" />
+  <link rel="stylesheet" href="/styles.css?v=9" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -47,6 +47,28 @@
       </div>
       <div class="chat-history" id="chatHistory"></div>
       <div class="chat-input">
+        <div class="scope-row">
+          <div class="scope-left">
+            <span class="muted">范围</span>
+            <select id="scopeSelect"></select>
+            <button id="btnScopeManage" class="ghost">选择表</button>
+            <span id="scopeHint" class="muted">全库</span>
+          </div>
+          <div class="scope-lock-wrap">
+            <label class="scope-lock">
+              <input id="scopeLock" type="checkbox" />
+              锁定表
+            </label>
+            <a id="lockHelpLink" class="help-link" href="javascript:void(0)">?</a>
+            <div id="lockHelpPop" class="help-pop lock-help">
+              <div class="help-title">锁定表说明</div>
+              <div class="help-line"><span>作用</span><span>只允许使用你选中的表</span></div>
+              <div class="help-line"><span>适用</span><span>你明确知道要查哪张表</span></div>
+              <div class="help-line"><span>效果</span><span>减少选错表的概率</span></div>
+              <div class="help-line"><span>注意</span><span>未选表时无法开启</span></div>
+            </div>
+          </div>
+        </div>
         <textarea id="chatInput" rows="3" placeholder="用自然语言提问，比如：本月按地区的销售额？"></textarea>
         <button id="btnSend">发送</button>
       </div>
@@ -415,6 +437,28 @@
     </div>
   </div>
 
-  <script src="/app.js?v=44"></script>
+  <div id="scopeModal" class="modal">
+    <div class="modal-card scope-card">
+      <div class="modal-header">
+        <div class="title">选择表范围</div>
+        <button id="btnCloseScope" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body scope-body">
+        <div class="scope-tools">
+          <input id="scopeSearch" placeholder="搜索表名" />
+          <span id="scopeCount" class="muted">已选 0</span>
+        </div>
+        <div id="scopeTableList" class="scope-table-list"></div>
+        <div class="scope-actions">
+          <input id="scopeName" placeholder="范围名称（可选）" />
+          <button id="btnScopeApply" class="ghost">仅本次使用</button>
+          <button id="btnScopeSave" class="btn-mini">保存为范围</button>
+        </div>
+        <div id="scopeStatus" class="muted"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=46"></script>
 </body>
 </html>

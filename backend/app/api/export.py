@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import re
+from urllib.parse import quote
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -33,7 +35,15 @@ async def export_xlsx(payload: Dict[str, Any], user=Depends(get_current_user)):
 
     if not filename.lower().endswith(".xlsx"):
         filename += ".xlsx"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    ascii_fallback = re.sub(r"[^\x20-\x7E]", "_", filename)
+    if not ascii_fallback or ascii_fallback == "____":
+        ascii_fallback = "result.xlsx"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=UTF-8''{quote(filename)}"
+        )
+    }
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

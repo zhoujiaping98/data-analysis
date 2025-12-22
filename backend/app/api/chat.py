@@ -82,11 +82,47 @@ async def chat_sse(
         ds_id, ds_cfg = await resolve_datasource(x_datasource_id)
         if not all([ds_cfg.get("host"), ds_cfg.get("database"), ds_cfg.get("user"), ds_cfg.get("password")]):
             raise HTTPException(status_code=500, detail="MySQL datasource config missing")
-        schema_context = build_schema_context(req.message, ds_id)
+        # Build allowed table scope (optional user-selected list)
+        try:
+            base_tables = await list_tables(ds_cfg, ds_id)
+        except Exception as e:
+            yield sse_event("error", {"message": str(e), "request_id": request_id, "where": "schema_tables"})
+            yield sse_event("done", {"ok": False, "request_id": request_id})
+            return
+        uploads = await list_file_uploads(user["username"], ds_id)
+        upload_names = {u["table_name"] for u in uploads}
+        available_tables = {t["name"] for t in base_tables if not t["name"].startswith("tmp_")} | upload_names
+
+        requested_tables = {t for t in (req.allowed_tables or []) if t}
+        if requested_tables:
+            invalid = sorted(list(requested_tables - available_tables))
+            if invalid:
+                yield sse_event(
+                    "error",
+                    {
+                        "message": "Selected tables are not available.",
+                        "request_id": request_id,
+                        "where": "scope_validation",
+                        "tables": invalid,
+                    },
+                )
+                yield sse_event("done", {"ok": False, "request_id": request_id})
+                return
+            allowed_tables = requested_tables
+        else:
+            allowed_tables = available_tables
+
+        schema_context = build_schema_context(req.message, ds_id, allowed_tables=allowed_tables)
 
         yield sse_event("status", {"stage": "sql_generation", "request_id": request_id})
         try:
-            sql = await generate_sql(req.message, schema_context, history)
+            sql = await generate_sql(
+                req.message,
+                schema_context,
+                history,
+                allowed_tables=sorted(list(allowed_tables)),
+                table_lock=bool(req.table_lock),
+            )
         except CircuitOpenError as e:
             yield sse_event("error", {"message": str(e), "request_id": request_id, "where": "llm_sql"})
             yield sse_event("done", {"ok": False, "request_id": request_id})
@@ -96,16 +132,7 @@ async def chat_sse(
         if explain_text:
             yield sse_event("sql_explain", {"text": explain_text, "request_id": request_id})
 
-        # Enforce table allowlist (base tables + user uploads) to avoid cross-schema access.
-        try:
-            base_tables = await list_tables(ds_cfg, ds_id)
-        except Exception as e:
-            yield sse_event("error", {"message": str(e), "request_id": request_id, "where": "schema_tables"})
-            yield sse_event("done", {"ok": False, "request_id": request_id})
-            return
-        uploads = await list_file_uploads(user["username"], ds_id)
-        upload_names = {u["table_name"] for u in uploads}
-        allowed_tables = {t["name"] for t in base_tables if not t["name"].startswith("tmp_")} | upload_names
+        # Enforce table allowlist to avoid cross-schema access.
 
         # Execute (retry: regenerate SQL if SQL error)
         cols = []
@@ -149,7 +176,13 @@ async def chat_sse(
                     f"Error: {last_err}\nSQL: {sql}"
                 )
                 try:
-                    sql = await generate_sql(fix_prompt, schema_context, history)
+                    sql = await generate_sql(
+                        fix_prompt,
+                        schema_context,
+                        history,
+                        allowed_tables=sorted(list(allowed_tables)),
+                        table_lock=bool(req.table_lock),
+                    )
                 except CircuitOpenError as e:
                     last_err = str(e)
                     yield sse_event("error", {"message": last_err, "request_id": request_id, "where": "llm_sql"})

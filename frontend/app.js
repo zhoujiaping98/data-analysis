@@ -53,6 +53,16 @@ let filterSeq = 1;
 
 let lastTableColumns = [];
 let lastTableRows = [];
+let scopeList = [];
+let scopeTablesCache = [];
+let scopeState = {
+  mode: "all",
+  scopeId: "",
+  scopeName: "",
+  tables: [],
+  lock: false
+};
+let scopeSelection = new Set();
 
 
 const el = (id) => document.getElementById(id);
@@ -80,6 +90,8 @@ async function login() {
   localStorage.setItem("token", token);
   setAuthStatus(`已登录：${username}`);
   await refreshDatasources();
+  await refreshScopes();
+  loadScopeState();
   await refreshSchemaTables();
   await refreshUploads();
   await refreshConversations();
@@ -133,6 +145,152 @@ async function refreshDatasources() {
   }
 }
 
+function scopeKey(kind) {
+  const dsId = currentDatasourceId || "default";
+  return `scope_${kind}_${dsId}`;
+}
+
+function loadScopeState() {
+  const raw = localStorage.getItem(scopeKey("state"));
+  if (raw) {
+    try {
+      const data = JSON.parse(raw);
+      scopeState = {
+        mode: data.mode || "all",
+        scopeId: data.scopeId || "",
+        scopeName: data.scopeName || "",
+        tables: Array.isArray(data.tables) ? data.tables : [],
+        lock: !!data.lock
+      };
+    } catch (_) {}
+  } else {
+    scopeState = { mode: "all", scopeId: "", scopeName: "", tables: [], lock: false };
+  }
+  const lockEl = el("scopeLock");
+  if (lockEl) lockEl.checked = !!scopeState.lock;
+  renderScopeSelect();
+  updateScopeHint();
+}
+
+function saveScopeState() {
+  localStorage.setItem(scopeKey("state"), JSON.stringify(scopeState));
+}
+
+function getRecentScope() {
+  const raw = localStorage.getItem(scopeKey("recent"));
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.tables) && data.tables.length) return data;
+  } catch (_) {}
+  return null;
+}
+
+function setRecentScope(tables, name = "") {
+  if (!Array.isArray(tables) || tables.length === 0) return;
+  localStorage.setItem(scopeKey("recent"), JSON.stringify({ tables, name }));
+}
+
+function updateScopeHint() {
+  const hint = el("scopeHint");
+  if (!hint) return;
+  if (scopeState.mode === "all") {
+    hint.textContent = "全库";
+    return;
+  }
+  const count = scopeState.tables.length;
+  hint.textContent = count ? `已选 ${count} 张表` : "未选择表";
+}
+
+function renderScopeSelect() {
+  const sel = el("scopeSelect");
+  if (!sel) return;
+  const currentValue =
+    scopeState.mode === "saved"
+      ? `scope:${scopeState.scopeId}`
+      : (scopeState.mode || "all");
+  sel.innerHTML = "";
+  const addOpt = (value, label) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  };
+  addOpt("all", "全库");
+  const recent = getRecentScope();
+  if (recent) addOpt("recent", "最近使用");
+  if (scopeState.mode === "custom") addOpt("custom", "自定义");
+  (scopeList || []).forEach(s => addOpt(`scope:${s.id}`, s.name || s.id));
+  const hasValue = Array.from(sel.options).some(o => o.value === currentValue);
+  sel.value = hasValue ? currentValue : "all";
+}
+
+async function refreshScopes() {
+  if (!token) {
+    scopeList = [];
+    renderScopeSelect();
+    return;
+  }
+  try {
+    const resp = await apiFetch("/scopes");
+    scopeList = await resp.json();
+    if (scopeState.mode === "saved" && scopeState.scopeId) {
+      const exists = (scopeList || []).some(s => s.id === scopeState.scopeId);
+      if (!exists) applyScopeSelection({ mode: "all", tables: [] });
+    }
+    renderScopeSelect();
+  } catch (e) {
+    scopeList = [];
+    renderScopeSelect();
+  }
+}
+
+async function loadScopeTables() {
+  if (!token) return [];
+  try {
+    const resp = await apiFetch("/schema/tables");
+    const tables = await resp.json();
+    scopeTablesCache = tables || [];
+    return scopeTablesCache;
+  } catch (e) {
+    scopeTablesCache = [];
+    return [];
+  }
+}
+
+function applyScopeSelection({ mode, tables, scopeId = "", scopeName = "" }) {
+  scopeState.mode = mode;
+  scopeState.tables = Array.isArray(tables) ? tables : [];
+  scopeState.scopeId = scopeId || "";
+  scopeState.scopeName = scopeName || "";
+  if (scopeState.tables.length) {
+    setRecentScope(scopeState.tables, scopeState.scopeName || "");
+  }
+  saveScopeState();
+  renderScopeSelect();
+  updateScopeHint();
+}
+
+function getActiveScopePayload() {
+  let tables = [];
+  let scopeName = "";
+  if (scopeState.mode === "all") {
+    tables = [];
+  } else if (scopeState.mode === "recent") {
+    const recent = getRecentScope();
+    tables = recent?.tables || [];
+    scopeName = recent?.name || "最近使用";
+  } else {
+    tables = scopeState.tables || [];
+    scopeName = scopeState.scopeName || "";
+  }
+  return {
+    allowed_tables: tables,
+    table_lock: !!scopeState.lock,
+    scope_name: scopeName
+  };
+}
+
 
 function openExportModal() {
   const modal = el("exportModal");
@@ -145,6 +303,110 @@ function closeExportModal() {
   const modal = el("exportModal");
   if (!modal) return;
   modal.classList.remove("open");
+}
+
+function openScopeModal() {
+  const modal = el("scopeModal");
+  if (!modal) return;
+  modal.classList.add("open");
+  const status = el("scopeStatus");
+  if (status) status.textContent = "";
+  const currentTables = scopeState.mode === "recent"
+    ? (getRecentScope()?.tables || [])
+    : (scopeState.tables || []);
+  scopeSelection = new Set(currentTables);
+  loadScopeTables().then(tables => renderScopeTableList(tables, el("scopeSearch")?.value || ""));
+  updateScopeCount();
+}
+
+function closeScopeModal() {
+  const modal = el("scopeModal");
+  if (!modal) return;
+  modal.classList.remove("open");
+}
+
+function updateScopeCount() {
+  const countEl = el("scopeCount");
+  if (countEl) countEl.textContent = `已选 ${scopeSelection.size}`;
+}
+
+function renderScopeTableList(tables, keyword = "") {
+  const listEl = el("scopeTableList");
+  if (!listEl) return;
+  const q = (keyword || "").trim().toLowerCase();
+  listEl.innerHTML = "";
+  const filtered = (tables || []).filter(t => {
+    const name = (t.name || "").toLowerCase();
+    return !q || name.includes(q);
+  });
+  if (filtered.length === 0) {
+    listEl.innerHTML = "<div class='muted'>未找到匹配的表</div>";
+    return;
+  }
+  filtered.forEach(t => {
+    const item = document.createElement("div");
+    item.className = "scope-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = scopeSelection.has(t.name);
+    checkbox.onchange = () => {
+      if (checkbox.checked) scopeSelection.add(t.name);
+      else scopeSelection.delete(t.name);
+      updateScopeCount();
+    };
+    const meta = document.createElement("div");
+    const name = document.createElement("div");
+    name.textContent = t.name;
+    const comment = document.createElement("div");
+    comment.className = "muted";
+    comment.textContent = (t.comment || t.type || "").trim();
+    meta.appendChild(name);
+    meta.appendChild(comment);
+    item.appendChild(checkbox);
+    item.appendChild(meta);
+    listEl.appendChild(item);
+  });
+}
+
+async function applyScopeOnce() {
+  const tables = Array.from(scopeSelection);
+  applyScopeSelection({ mode: "custom", tables });
+  closeScopeModal();
+}
+
+async function saveScope() {
+  const status = el("scopeStatus");
+  const name = (el("scopeName")?.value || "").trim();
+  const tables = Array.from(scopeSelection);
+  if (!tables.length) {
+    if (status) status.textContent = "请先选择表";
+    return;
+  }
+  if (!name) {
+    if (status) status.textContent = "请输入范围名称";
+    return;
+  }
+  if (status) status.textContent = "保存中...";
+  try {
+    const resp = await apiFetch("/scopes", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ name, tables })
+    });
+    const data = await resp.json();
+    await refreshScopes();
+    applyScopeSelection({
+      mode: "saved",
+      tables: data.tables || tables,
+      scopeId: data.id,
+      scopeName: data.name || name
+    });
+    if (el("scopeName")) el("scopeName").value = "";
+    if (status) status.textContent = "已保存";
+    closeScopeModal();
+  } catch (e) {
+    if (status) status.textContent = "保存失败";
+  }
 }
 
 function setSqlAssist({ explain, suggest, safety, fix }) {
@@ -237,6 +499,11 @@ async function runSql() {
     if (status) status.textContent = "请输入 SQL";
     return;
   }
+  const scopePayload = getActiveScopePayload();
+  if (scopePayload.table_lock && (!scopePayload.allowed_tables || scopePayload.allowed_tables.length === 0)) {
+    if (status) status.textContent = "请先选择要锁定的表";
+    return;
+  }
   if (!activeConversationId || !activeMessageId) {
     if (status) status.textContent = "当前问题未就绪";
     return;
@@ -250,7 +517,9 @@ async function runSql() {
         conversation_id: activeConversationId,
         message_id: activeMessageId,
         sql,
-        with_analysis: true
+        with_analysis: true,
+        allowed_tables: scopePayload.allowed_tables || [],
+        table_lock: scopePayload.table_lock
       })
     });
     const data = await resp.json();
@@ -1381,6 +1650,10 @@ function debounceSaveTableView() {
 async function saveTableView() {
   if (!activeConversationId || !activeMessageId) return;
   try {
+    const scopePayload = getActiveScopePayload();
+    if (scopePayload.table_lock && (!scopePayload.allowed_tables || scopePayload.allowed_tables.length === 0)) {
+      return;
+    }
     await apiFetch("/sql/execute", {
       method: "POST",
       headers: {"Content-Type":"application/json"},
@@ -1389,7 +1662,9 @@ async function saveTableView() {
         message_id: activeMessageId,
         sql: el("sqlBox").textContent || "",
         with_analysis: false,
-        view: tableViewState
+        view: tableViewState,
+        allowed_tables: scopePayload.allowed_tables || [],
+        table_lock: scopePayload.table_lock
       })
     });
     tableViewDirty = false;
@@ -1836,6 +2111,11 @@ function renderTableModal() {
 async function sendMessage() {
   const text = el("chatInput").value.trim();
   if (!text) return;
+  const scopePayload = getActiveScopePayload();
+  if (scopePayload.table_lock && (!scopePayload.allowed_tables || scopePayload.allowed_tables.length === 0)) {
+    addChatMessage("assistant", "请先选择要锁定的表");
+    return;
+  }
   lastUserQuestion = text;
   reportContext.question = text;
   tableViewState = { filters: [], sortField: "", sortDir: "asc", derived: [], aggregation: null };
@@ -1853,7 +2133,13 @@ async function sendMessage() {
       "Authorization": `Bearer ${token}`,
       "X-Datasource-Id": currentDatasourceId || ""
     },
-    body: JSON.stringify({conversation_id: activeConversationId, message: text})
+    body: JSON.stringify({
+      conversation_id: activeConversationId,
+      message: text,
+      allowed_tables: scopePayload.allowed_tables || [],
+      table_lock: scopePayload.table_lock,
+      scope_name: scopePayload.scope_name || ""
+    })
   });
 
   if (!resp.ok) {
@@ -2005,6 +2291,8 @@ el("btnSend").onclick = sendMessage;
 if (el("datasourceSelect")) el("datasourceSelect").onchange = async (e) => {
   currentDatasourceId = e.target.value || "";
   localStorage.setItem("datasourceId", currentDatasourceId);
+  await refreshScopes();
+  loadScopeState();
   await refreshSchemaTables();
   await refreshUploads();
   await refreshSchemaChanges();
@@ -2023,6 +2311,51 @@ if (el("btnCloseExport")) el("btnCloseExport").onclick = closeExportModal;
 if (el("exportModal")) el("exportModal").addEventListener("click", (e) => {
   if (e.target.id === "exportModal") closeExportModal();
 });
+if (el("scopeSelect")) el("scopeSelect").onchange = (e) => {
+  const val = e.target.value || "all";
+  if (val === "all") {
+    applyScopeSelection({ mode: "all", tables: [] });
+  } else if (val === "recent") {
+    const recent = getRecentScope();
+    if (recent) applyScopeSelection({ mode: "recent", tables: recent.tables, scopeName: recent.name || "" });
+    else applyScopeSelection({ mode: "all", tables: [] });
+  } else if (val === "custom") {
+    openScopeModal();
+  } else if (val.startsWith("scope:")) {
+    const id = val.slice("scope:".length);
+    const scope = (scopeList || []).find(s => s.id === id);
+    if (scope) {
+      applyScopeSelection({ mode: "saved", tables: scope.tables || [], scopeId: scope.id, scopeName: scope.name || "" });
+    }
+  }
+};
+if (el("btnScopeManage")) el("btnScopeManage").onclick = openScopeModal;
+if (el("btnCloseScope")) el("btnCloseScope").onclick = closeScopeModal;
+if (el("scopeModal")) el("scopeModal").addEventListener("click", (e) => {
+  if (e.target.id === "scopeModal") closeScopeModal();
+});
+if (el("lockHelpLink")) el("lockHelpLink").onclick = (e) => {
+  e.stopPropagation();
+  const pop = el("lockHelpPop");
+  if (!pop) return;
+  pop.classList.toggle("open");
+};
+document.addEventListener("click", (e) => {
+  const pop = el("lockHelpPop");
+  if (!pop || !pop.classList.contains("open")) return;
+  const link = el("lockHelpLink");
+  if (pop.contains(e.target) || (link && link.contains(e.target))) return;
+  pop.classList.remove("open");
+});
+if (el("scopeSearch")) el("scopeSearch").addEventListener("input", (e) => {
+  renderScopeTableList(scopeTablesCache, e.target.value || "");
+});
+if (el("btnScopeApply")) el("btnScopeApply").onclick = applyScopeOnce;
+if (el("btnScopeSave")) el("btnScopeSave").onclick = saveScope;
+if (el("scopeLock")) el("scopeLock").onchange = (e) => {
+  scopeState.lock = !!e.target.checked;
+  saveScopeState();
+};
 if (el("btnEditSql")) el("btnEditSql").onclick = openSqlModal;
 if (el("btnCloseSqlModal")) el("btnCloseSqlModal").onclick = closeSqlModal;
 if (el("sqlModal")) el("sqlModal").addEventListener("click", (e) => {
@@ -2273,6 +2606,8 @@ el("chatInput").addEventListener("keydown", (e) => {
     setAuthStatus("已读取本地 token");
     try {
       await refreshDatasources();
+      await refreshScopes();
+      loadScopeState();
       await refreshSchemaTables();
       await refreshUploads();
       await refreshSchemaChanges();

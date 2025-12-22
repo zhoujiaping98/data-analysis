@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Dict
+from typing import List, Dict, Iterable
 import re
 
 from backend.app.core.config import settings
@@ -46,9 +46,22 @@ def _extract_sql(text: str) -> str:
     return s.strip().strip("` ")
 
 
-def build_messages(question: str, schema_context: str, history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def build_messages(
+    question: str,
+    schema_context: str,
+    history: List[Dict[str, str]],
+    allowed_tables: Iterable[str] | None = None,
+    table_lock: bool = False,
+) -> List[Dict[str, str]]:
     msgs: List[Dict[str, str]] = []
     msgs.append({"role": "system", "content": SYSTEM_PROMPT.format(max_rows=settings.MAX_ROWS)})
+    if allowed_tables:
+        tables = ", ".join([t for t in allowed_tables if t])
+        if tables:
+            rule = f"Only use these tables: {tables}."
+            if table_lock:
+                rule += " Do not introduce any other tables."
+            msgs.append({"role": "system", "content": rule})
     if schema_context:
         msgs.append({"role": "system", "content": f"Relevant schema:\n{schema_context}"})
     # history: [{'role': 'user'|'assistant', 'content': '...'}]
@@ -57,7 +70,16 @@ def build_messages(question: str, schema_context: str, history: List[Dict[str, s
     return msgs
 
 
-async def generate_sql(question: str, schema_context: str, history: List[Dict[str, str]]) -> str:
+async def generate_sql(
+    question: str,
+    schema_context: str,
+    history: List[Dict[str, str]],
+    allowed_tables: Iterable[str] | None = None,
+    table_lock: bool = False,
+) -> str:
     client = get_chat_client()
-    content = await client.chat(build_messages(question, schema_context, history), temperature=settings.LLM_TEMPERATURE)
+    content = await client.chat(
+        build_messages(question, schema_context, history, allowed_tables=allowed_tables, table_lock=table_lock),
+        temperature=settings.LLM_TEMPERATURE,
+    )
     return _extract_sql(content)

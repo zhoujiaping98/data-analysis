@@ -63,11 +63,19 @@ async def execute_sql(
     if not all([ds_cfg.get("host"), ds_cfg.get("database"), ds_cfg.get("user"), ds_cfg.get("password")]):
         raise HTTPException(status_code=500, detail="MySQL datasource config missing")
 
-    # Enforce table allowlist (base tables + user uploads)
+    # Enforce table allowlist (base tables + user uploads), optionally scoped by user.
     base_tables = await list_tables(ds_cfg, ds_id)
     uploads = await list_file_uploads(user["username"], ds_id)
     upload_names = {u["table_name"] for u in uploads}
-    allowed_tables = {t["name"] for t in base_tables if not t["name"].startswith("tmp_")} | upload_names
+    available_tables = {t["name"] for t in base_tables if not t["name"].startswith("tmp_")} | upload_names
+    requested_tables = {t for t in (req.allowed_tables or []) if t}
+    if requested_tables:
+        invalid = sorted(list(requested_tables - available_tables))
+        if invalid:
+            raise HTTPException(status_code=400, detail="Selected tables are not available.")
+        allowed_tables = requested_tables
+    else:
+        allowed_tables = available_tables
     used_tables = set(extract_table_names(sql))
     if used_tables and not used_tables.issubset(allowed_tables):
         raise HTTPException(
