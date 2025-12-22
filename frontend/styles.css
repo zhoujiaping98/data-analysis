@@ -672,11 +672,12 @@ body::before {
   gap: 6px;
   position: relative;
 }
-.lock-help {
+#lockHelpPop {
   right: 0;
-  top: 28px;
-  width: 260px;
-  max-height: 160px;
+  top: 24px;
+  width: 240px;
+  height: 94px;
+  max-height: 140px;
   overflow: auto;
 }
 .scope-lock input {
